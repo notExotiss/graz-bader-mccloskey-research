@@ -1,0 +1,6 @@
+method,mean_K,std_K,mean_NMI_subblocks,mean_NMI_superblocks
+Louvain,5.4,0.49,0.814,0.61
+Leiden,5.4,0.49,0.814,0.61
+CPM-Leiden,10,0.0,0.999,0.463
+GRAZ (t=2),9.6,0.49,0.984,0.472
+GRAZ (t=3),10.2,0.4,0.999,0.462

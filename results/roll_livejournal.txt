@@ -1,0 +1,3 @@
+
+=== Experiment 9: rolling-window dQ stopping rule (large graphs) ===
+  (livejournal: CNM aborted by memory guard after 1 merges -- not reported)

@@ -1,0 +1,279 @@
+
+=== Experiment 10: rolling-window rule on small networks ===
+dataset	method	W	k	sided	stop_at	of_merges	K	Q	F1	NMI
+
+-- dQ trace diagnostics: karate (31 merges) --
+  first 15 dQ: 1.216e-02 2.367e-02 1.249e-02 1.923e-02 3.131e-02 1.216e-02 1.726e-02 1.619e-02 1.644e-02 1.208e-02 2.268e-02 1.183e-02 1.134e-02 1.118e-02 1.118e-02
+  quartile dQ:  [7]=1.619e-02 [15]=1.677e-02 [22]=9.862e-03 [30]=4.684e-03
+  first-20 window: mu=1.516e-02 sd=5.369e-03 cv=3.542e-01
+  W=10 k=2 1sided: cut=30/31  window mu=0.012 sd=0.003 dq=0.005  (mu-dq)/sd=2.207
+  W=15 k=2 1sided: cut=30/31  window mu=0.012 sd=0.003 dq=0.005  (mu-dq)/sd=2.405
+  W=20 k=2 1sided: cut=30/31  window mu=0.013 sd=0.004 dq=0.005  (mu-dq)/sd=2.207
+karate	Louvain	-	-	-	-1	31	4	0.416	0.689	0.498
+karate	GRAZ t=2	-	-	-	-1	31	16	0.186	0.310	0.369
+karate	CNM-full	-	-	-	31	31	3	0.381	0.761	0.565
+karate	roll-1sided	10	1.75	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	10	1.75	2	21	31	13	0.269	0.377	0.375
+karate	roll-log	10	1.75	1	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	10	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	10	2.00	2	21	31	13	0.269	0.377	0.375
+karate	roll-log	10	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	10	2.50	1	31	31	3	0.381	0.761	0.565
+karate	roll-2sided	10	2.50	2	21	31	13	0.269	0.377	0.375
+karate	roll-log	10	2.50	1	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	15	1.75	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	15	1.75	2	21	31	13	0.269	0.377	0.375
+karate	roll-log	15	1.75	1	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	15	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	15	2.00	2	30	31	4	0.376	0.671	0.537
+karate	roll-log	15	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	15	2.50	1	31	31	3	0.381	0.761	0.565
+karate	roll-2sided	15	2.50	2	31	31	3	0.381	0.761	0.565
+karate	roll-log	15	2.50	1	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	20	1.75	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	20	1.75	2	30	31	4	0.376	0.671	0.537
+karate	roll-log	20	1.75	1	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	20	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	20	2.00	2	30	31	4	0.376	0.671	0.537
+karate	roll-log	20	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	20	2.50	1	31	31	3	0.381	0.761	0.565
+karate	roll-2sided	20	2.50	2	31	31	3	0.381	0.761	0.565
+karate	roll-log	20	2.50	1	30	31	4	0.376	0.671	0.537
+karate	roll-rel25	15	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-rel50	15	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-rel25	15	2.50	1	31	31	3	0.381	0.761	0.565
+karate	roll-rel50	15	2.50	1	31	31	3	0.381	0.761	0.565
+karate	roll-rel25	20	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-rel50	20	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-rel25	20	2.50	1	31	31	3	0.381	0.761	0.565
+karate	roll-rel50	20	2.50	1	31	31	3	0.381	0.761	0.565
+karate	T1-2sided-k1	10	1.00	2	11	31	23	0.146	0.320	0.388
+karate	T1-2sided-k1	15	1.00	2	21	31	13	0.269	0.377	0.375
+karate	T1-2sided-k1	20	1.00	2	22	31	12	0.289	0.390	0.388
+karate	T2-short-1sided	5	3.00	1	30	31	4	0.376	0.671	0.537
+karate	T2-short-2sided	5	3.00	2	10	31	24	0.123	0.317	0.382
+karate	T2-short-1sided	5	4.00	1	31	31	3	0.381	0.761	0.565
+karate	T2-short-2sided	5	4.00	2	31	31	3	0.381	0.761	0.565
+karate	T2-short-1sided	5	5.00	1	31	31	3	0.381	0.761	0.565
+karate	T2-short-2sided	5	5.00	2	31	31	3	0.381	0.761	0.565
+karate	T2-short-1sided	7	3.00	1	30	31	4	0.376	0.671	0.537
+karate	T2-short-2sided	7	3.00	2	30	31	4	0.376	0.671	0.537
+karate	T2-short-1sided	7	4.00	1	31	31	3	0.381	0.761	0.565
+karate	T2-short-2sided	7	4.00	2	31	31	3	0.381	0.761	0.565
+karate	T2-short-1sided	7	5.00	1	31	31	3	0.381	0.761	0.565
+karate	T2-short-2sided	7	5.00	2	31	31	3	0.381	0.761	0.565
+karate	T2-short-1sided	10	3.00	1	31	31	3	0.381	0.761	0.565
+karate	T2-short-2sided	10	3.00	2	21	31	13	0.269	0.377	0.375
+karate	T2-short-1sided	10	4.00	1	31	31	3	0.381	0.761	0.565
+karate	T2-short-2sided	10	4.00	2	31	31	3	0.381	0.761	0.565
+karate	T2-short-1sided	10	5.00	1	31	31	3	0.381	0.761	0.565
+karate	T2-short-2sided	10	5.00	2	31	31	3	0.381	0.761	0.565
+karate	T3-diff-2sided	10	1.00	2	10	31	24	0.123	0.317	0.382
+karate	T3-diff-1sided	10	1.00	1	11	31	23	0.146	0.320	0.388
+karate	T3-diff-2sided	10	2.00	2	21	31	13	0.269	0.377	0.375
+karate	T3-diff-1sided	10	2.00	1	22	31	12	0.289	0.390	0.388
+karate	T3-diff-2sided	10	2.50	2	22	31	12	0.289	0.390	0.388
+karate	T3-diff-1sided	10	2.50	1	22	31	12	0.289	0.390	0.388
+karate	T3-diff-2sided	10	3.00	2	22	31	12	0.289	0.390	0.388
+karate	T3-diff-1sided	10	3.00	1	22	31	12	0.289	0.390	0.388
+karate	T3-diff-2sided	15	1.00	2	16	31	18	0.208	0.334	0.356
+karate	T3-diff-1sided	15	1.00	1	16	31	18	0.208	0.334	0.356
+karate	T3-diff-2sided	15	2.00	2	22	31	12	0.289	0.390	0.388
+karate	T3-diff-1sided	15	2.00	1	22	31	12	0.289	0.390	0.388
+karate	T3-diff-2sided	15	2.50	2	22	31	12	0.289	0.390	0.388
+karate	T3-diff-1sided	15	2.50	1	22	31	12	0.289	0.390	0.388
+karate	T3-diff-2sided	15	3.00	2	31	31	3	0.381	0.761	0.565
+karate	T3-diff-1sided	15	3.00	1	31	31	3	0.381	0.761	0.565
+karate	T3-diff-2sided	20	1.00	2	22	31	12	0.289	0.390	0.388
+karate	T3-diff-1sided	20	1.00	1	22	31	12	0.289	0.390	0.388
+karate	T3-diff-2sided	20	2.00	2	22	31	12	0.289	0.390	0.388
+karate	T3-diff-1sided	20	2.00	1	22	31	12	0.289	0.390	0.388
+karate	T3-diff-2sided	20	2.50	2	31	31	3	0.381	0.761	0.565
+karate	T3-diff-1sided	20	2.50	1	31	31	3	0.381	0.761	0.565
+karate	T3-diff-2sided	20	3.00	2	31	31	3	0.381	0.761	0.565
+karate	T3-diff-1sided	20	3.00	1	31	31	3	0.381	0.761	0.565
+
+-- dQ trace diagnostics: polblogs (1482 merges) --
+  first 15 dQ: 9.730e-05 9.728e-05 9.728e-05 9.728e-05 9.727e-05 9.725e-05 9.724e-05 9.724e-05 9.723e-05 9.721e-05 9.721e-05 9.720e-05 9.720e-05 9.720e-05 9.720e-05
+  quartile dQ:  [370]=2.908e-04 [740]=2.537e-04 [1110]=2.761e-04 [1481]=2.470e-06
+  first-20 window: mu=9.723e-05 sd=3.641e-08 cv=3.745e-04
+  W=10 k=2 1sided: cut=17/1482  window mu=0.000 sd=0.000 dq=0.000  (mu-dq)/sd=2.185
+  W=15 k=2 1sided: cut=20/1482  window mu=0.000 sd=0.000 dq=0.000  (mu-dq)/sd=2.188
+  W=20 k=2 1sided: cut=25/1482  window mu=0.000 sd=0.000 dq=0.000  (mu-dq)/sd=2.123
+polblogs	Louvain	-	-	-	-1	1482	4	0.295	0.664	0.457
+polblogs	GRAZ t=2	-	-	-	-1	1482	27	0.267	0.354	0.274
+polblogs	CNM-full	-	-	-	1482	1482	8	0.349	0.613	0.826
+polblogs	roll-1sided	10	1.75	1	10	1482	1480	0.000	0.004	0.173
+polblogs	roll-2sided	10	1.75	2	10	1482	1480	0.000	0.004	0.173
+polblogs	roll-log	10	1.75	1	10	1482	1480	0.000	0.004	0.173
+polblogs	roll-1sided	10	2.00	1	17	1482	1473	0.001	0.004	0.173
+polblogs	roll-2sided	10	2.00	2	17	1482	1473	0.001	0.004	0.173
+polblogs	roll-log	10	2.00	1	17	1482	1473	0.001	0.004	0.173
+polblogs	roll-1sided	10	2.50	1	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-2sided	10	2.50	2	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-log	10	2.50	1	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-1sided	15	1.75	1	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-2sided	15	1.75	2	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-log	15	1.75	1	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-1sided	15	2.00	1	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-2sided	15	2.00	2	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-log	15	2.00	1	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-1sided	15	2.50	1	46	1482	1444	0.004	0.004	0.173
+polblogs	roll-2sided	15	2.50	2	46	1482	1444	0.004	0.004	0.173
+polblogs	roll-log	15	2.50	1	46	1482	1444	0.004	0.004	0.173
+polblogs	roll-1sided	20	1.75	1	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-2sided	20	1.75	2	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-log	20	1.75	1	20	1482	1470	0.001	0.004	0.173
+polblogs	roll-1sided	20	2.00	1	25	1482	1465	0.002	0.004	0.173
+polblogs	roll-2sided	20	2.00	2	25	1482	1465	0.002	0.004	0.173
+polblogs	roll-log	20	2.00	1	25	1482	1465	0.002	0.004	0.173
+polblogs	roll-1sided	20	2.50	1	46	1482	1444	0.004	0.004	0.173
+polblogs	roll-2sided	20	2.50	2	46	1482	1444	0.004	0.004	0.173
+polblogs	roll-log	20	2.50	1	46	1482	1444	0.004	0.004	0.173
+polblogs	roll-rel25	15	2.00	1	330	1482	1160	0.043	0.062	0.176
+polblogs	roll-rel50	15	2.00	1	1479	1482	11	0.349	0.580	0.818
+polblogs	roll-rel25	15	2.50	1	854	1482	636	0.186	0.248	0.274
+polblogs	roll-rel50	15	2.50	1	1482	1482	8	0.349	0.613	0.826
+polblogs	roll-rel25	20	2.00	1	834	1482	656	0.182	0.243	0.267
+polblogs	roll-rel50	20	2.00	1	1482	1482	8	0.349	0.613	0.826
+polblogs	roll-rel25	20	2.50	1	1448	1482	42	0.344	0.509	0.744
+polblogs	roll-rel50	20	2.50	1	1482	1482	8	0.349	0.613	0.826
+polblogs	T1-2sided-k1	10	1.00	2	10	1482	1480	0.000	0.004	0.173
+polblogs	T1-2sided-k1	15	1.00	2	15	1482	1475	0.001	0.004	0.173
+polblogs	T1-2sided-k1	20	1.00	2	20	1482	1470	0.001	0.004	0.173
+polblogs	T2-short-1sided	5	3.00	1	6	1482	1484	-0.000	0.004	0.173
+polblogs	T2-short-2sided	5	3.00	2	6	1482	1484	-0.000	0.004	0.173
+polblogs	T2-short-1sided	5	4.00	1	25	1482	1465	0.002	0.004	0.173
+polblogs	T2-short-2sided	5	4.00	2	25	1482	1465	0.002	0.004	0.173
+polblogs	T2-short-1sided	5	5.00	1	58	1482	1432	0.005	0.004	0.173
+polblogs	T2-short-2sided	5	5.00	2	58	1482	1432	0.005	0.004	0.173
+polblogs	T2-short-1sided	7	3.00	1	17	1482	1473	0.001	0.004	0.173
+polblogs	T2-short-2sided	7	3.00	2	17	1482	1473	0.001	0.004	0.173
+polblogs	T2-short-1sided	7	4.00	1	17	1482	1473	0.001	0.004	0.173
+polblogs	T2-short-2sided	7	4.00	2	17	1482	1473	0.001	0.004	0.173
+polblogs	T2-short-1sided	7	5.00	1	17	1482	1473	0.001	0.004	0.173
+polblogs	T2-short-2sided	7	5.00	2	17	1482	1473	0.001	0.004	0.173
+polblogs	T2-short-1sided	10	3.00	1	20	1482	1470	0.001	0.004	0.173
+polblogs	T2-short-2sided	10	3.00	2	20	1482	1470	0.001	0.004	0.173
+polblogs	T2-short-1sided	10	4.00	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T2-short-2sided	10	4.00	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T2-short-1sided	10	5.00	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T2-short-2sided	10	5.00	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	10	1.00	2	17	1482	1473	0.001	0.004	0.173
+polblogs	T3-diff-1sided	10	1.00	1	17	1482	1473	0.001	0.004	0.173
+polblogs	T3-diff-2sided	10	2.00	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	10	2.00	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	10	2.50	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	10	2.50	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	10	3.00	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	10	3.00	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	15	1.00	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	15	1.00	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	15	2.00	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	15	2.00	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	15	2.50	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	15	2.50	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	15	3.00	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	15	3.00	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	20	1.00	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	20	1.00	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	20	2.00	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	20	2.00	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	20	2.50	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	20	2.50	1	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-2sided	20	3.00	2	46	1482	1444	0.004	0.004	0.173
+polblogs	T3-diff-1sided	20	3.00	1	46	1482	1444	0.004	0.004	0.173
+
+-- dQ trace diagnostics: email (977 merges) --
+  first 15 dQ: 6.224e-05 6.224e-05 6.224e-05 6.224e-05 1.236e-04 8.556e-05 1.128e-04 1.711e-04 1.888e-04 1.988e-04 2.216e-04 2.685e-04 2.914e-04 3.259e-04 3.601e-04
+  quartile dQ:  [244]=1.909e-04 [488]=2.682e-04 [732]=4.199e-04 [976]=1.466e-05
+  first-20 window: mu=2.422e-04 sd=1.491e-04 cv=6.157e-01
+  W=10 k=2 1sided: cut=42/977  window mu=0.001 sd=0.000 dq=0.001  (mu-dq)/sd=3.522
+  W=15 k=2 1sided: cut=42/977  window mu=0.001 sd=0.000 dq=0.001  (mu-dq)/sd=2.195
+  W=20 k=2 1sided: cut=43/977  window mu=0.001 sd=0.000 dq=0.001  (mu-dq)/sd=2.105
+email	Louvain	-	-	-	-1	977	8	0.416	0.430	0.592
+email	GRAZ t=2	-	-	-	-1	977	18	0.410	0.387	0.637
+email	CNM-full	-	-	-	977	977	9	0.351	0.317	0.456
+email	roll-1sided	10	1.75	1	42	977	944	0.016	0.149	0.659
+email	roll-2sided	10	1.75	2	10	977	976	-0.001	0.143	0.651
+email	roll-log	10	1.75	1	42	977	944	0.016	0.149	0.659
+email	roll-1sided	10	2.00	1	42	977	944	0.016	0.149	0.659
+email	roll-2sided	10	2.00	2	10	977	976	-0.001	0.143	0.651
+email	roll-log	10	2.00	1	42	977	944	0.016	0.149	0.659
+email	roll-1sided	10	2.50	1	42	977	944	0.016	0.149	0.659
+email	roll-2sided	10	2.50	2	35	977	951	0.011	0.148	0.657
+email	roll-log	10	2.50	1	42	977	944	0.016	0.149	0.659
+email	roll-1sided	15	1.75	1	42	977	944	0.016	0.149	0.659
+email	roll-2sided	15	1.75	2	15	977	971	0.000	0.144	0.652
+email	roll-log	15	1.75	1	42	977	944	0.016	0.149	0.659
+email	roll-1sided	15	2.00	1	42	977	944	0.016	0.149	0.659
+email	roll-2sided	15	2.00	2	15	977	971	0.000	0.144	0.652
+email	roll-log	15	2.00	1	42	977	944	0.016	0.149	0.659
+email	roll-1sided	15	2.50	1	102	977	884	0.054	0.155	0.657
+email	roll-2sided	15	2.50	2	35	977	951	0.011	0.148	0.657
+email	roll-log	15	2.50	1	59	977	927	0.026	0.151	0.658
+email	roll-1sided	20	1.75	1	42	977	944	0.016	0.149	0.659
+email	roll-2sided	20	1.75	2	20	977	966	0.003	0.145	0.653
+email	roll-log	20	1.75	1	42	977	944	0.016	0.149	0.659
+email	roll-1sided	20	2.00	1	43	977	943	0.016	0.149	0.659
+email	roll-2sided	20	2.00	2	20	977	966	0.003	0.145	0.653
+email	roll-log	20	2.00	1	42	977	944	0.016	0.149	0.659
+email	roll-1sided	20	2.50	1	209	977	777	0.097	0.159	0.650
+email	roll-2sided	20	2.50	2	67	977	919	0.030	0.152	0.658
+email	roll-log	20	2.50	1	60	977	926	0.026	0.151	0.659
+email	roll-rel25	15	2.00	1	83	977	903	0.043	0.153	0.657
+email	roll-rel50	15	2.00	1	712	977	274	0.274	0.140	0.498
+email	roll-rel25	15	2.50	1	143	977	843	0.079	0.157	0.653
+email	roll-rel50	15	2.50	1	712	977	274	0.274	0.140	0.498
+email	roll-rel25	20	2.00	1	86	977	900	0.045	0.154	0.658
+email	roll-rel50	20	2.00	1	712	977	274	0.274	0.140	0.498
+email	roll-rel25	20	2.50	1	209	977	777	0.097	0.159	0.650
+email	roll-rel50	20	2.50	1	854	977	132	0.345	0.184	0.529
+email	T1-2sided-k1	10	1.00	2	10	977	976	-0.001	0.143	0.651
+email	T1-2sided-k1	15	1.00	2	15	977	971	0.000	0.144	0.652
+email	T1-2sided-k1	20	1.00	2	20	977	966	0.003	0.145	0.653
+email	T2-short-1sided	5	3.00	1	42	977	944	0.016	0.149	0.659
+email	T2-short-2sided	5	3.00	2	7	977	979	-0.002	0.142	0.650
+email	T2-short-1sided	5	4.00	1	42	977	944	0.016	0.149	0.659
+email	T2-short-2sided	5	4.00	2	42	977	944	0.016	0.149	0.659
+email	T2-short-1sided	5	5.00	1	42	977	944	0.016	0.149	0.659
+email	T2-short-2sided	5	5.00	2	42	977	944	0.016	0.149	0.659
+email	T2-short-1sided	7	3.00	1	42	977	944	0.016	0.149	0.659
+email	T2-short-2sided	7	3.00	2	7	977	979	-0.002	0.142	0.650
+email	T2-short-1sided	7	4.00	1	42	977	944	0.016	0.149	0.659
+email	T2-short-2sided	7	4.00	2	42	977	944	0.016	0.149	0.659
+email	T2-short-1sided	7	5.00	1	202	977	784	0.096	0.159	0.651
+email	T2-short-2sided	7	5.00	2	186	977	800	0.093	0.158	0.649
+email	T2-short-1sided	10	3.00	1	42	977	944	0.016	0.149	0.659
+email	T2-short-2sided	10	3.00	2	35	977	951	0.011	0.148	0.657
+email	T2-short-1sided	10	4.00	1	83	977	903	0.043	0.153	0.657
+email	T2-short-2sided	10	4.00	2	83	977	903	0.043	0.153	0.657
+email	T2-short-1sided	10	5.00	1	262	977	724	0.108	0.141	0.641
+email	T2-short-2sided	10	5.00	2	262	977	724	0.108	0.141	0.641
+email	T3-diff-2sided	10	1.00	2	29	977	957	0.008	0.147	0.655
+email	T3-diff-1sided	10	1.00	1	29	977	957	0.008	0.147	0.655
+email	T3-diff-2sided	10	2.00	2	35	977	951	0.011	0.148	0.657
+email	T3-diff-1sided	10	2.00	1	42	977	944	0.016	0.149	0.659
+email	T3-diff-2sided	10	2.50	2	35	977	951	0.011	0.148	0.657
+email	T3-diff-1sided	10	2.50	1	58	977	928	0.025	0.151	0.658
+email	T3-diff-2sided	10	3.00	2	58	977	928	0.025	0.151	0.658
+email	T3-diff-1sided	10	3.00	1	58	977	928	0.025	0.151	0.658
+email	T3-diff-2sided	15	1.00	2	35	977	951	0.011	0.148	0.657
+email	T3-diff-1sided	15	1.00	1	37	977	949	0.013	0.148	0.657
+email	T3-diff-2sided	15	2.00	2	35	977	951	0.011	0.148	0.657
+email	T3-diff-1sided	15	2.00	1	58	977	928	0.025	0.151	0.658
+email	T3-diff-2sided	15	2.50	2	58	977	928	0.025	0.151	0.658
+email	T3-diff-1sided	15	2.50	1	58	977	928	0.025	0.151	0.658
+email	T3-diff-2sided	15	3.00	2	211	977	775	0.097	0.159	0.650
+email	T3-diff-1sided	15	3.00	1	241	977	745	0.105	0.160	0.646
+email	T3-diff-2sided	20	1.00	2	37	977	949	0.013	0.148	0.657
+email	T3-diff-1sided	20	1.00	1	37	977	949	0.013	0.148	0.657
+email	T3-diff-2sided	20	2.00	2	58	977	928	0.025	0.151	0.658
+email	T3-diff-1sided	20	2.00	1	58	977	928	0.025	0.151	0.658
+email	T3-diff-2sided	20	2.50	2	211	977	775	0.097	0.159	0.650
+email	T3-diff-1sided	20	2.50	1	241	977	745	0.105	0.160	0.646
+email	T3-diff-2sided	20	3.00	2	211	977	775	0.097	0.159	0.650
+email	T3-diff-1sided	20	3.00	1	241	977	745	0.105	0.160	0.646
+
+=== Experiment 9: rolling-window dQ stopping rule (large graphs) ===
+  (skipped: pass large=edges[:labels])

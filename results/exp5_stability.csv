@@ -1,0 +1,5 @@
+method,mean_K,std_K,mean_pairwise_NMI
+Louvain,22.1,1.053,0.9435
+Leiden,22.1,1.053,0.9435
+GRAZ (t=2),24.3,0.591,0.9578
+GRAZ (t=3),26.6,1.464,0.9598

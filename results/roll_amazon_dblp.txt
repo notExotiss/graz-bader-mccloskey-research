@@ -1,0 +1,4 @@
+
+=== Experiment 9: rolling-window dQ stopping rule (large graphs) ===
+  (amazon_full: CNM aborted by memory guard after 51275 merges -- not reported)
+  (dblp_full: CNM aborted by memory guard after 43797 merges -- not reported)

@@ -1,0 +1,6 @@
+
+=== Experiment 7: Large real networks (quality + timing) ===
+dataset	N	M	method	K	Q	F1	NMI	total_ms	move_ms	aggr_ms	refine_ms	levels	sweeps	visits	z_tests
+youtube	1134890	2987624	GRAZ-merge t=2	29344	0.712	0.265	0.520	102852	100499	1677	101	6	82	24660439	20093518
+youtube	1134890	2987624	GRAZ-merge t=3	30601	0.710	0.277	0.539	105189	102696	1813	95	6	81	24113544	19532012
+youtube	1134890	2987624	GRAZ-merge t=4	30851	0.708	0.294	0.552	114533	111087	2543	156	6	87	25269779	24430611

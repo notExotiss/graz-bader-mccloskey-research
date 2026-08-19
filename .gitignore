@@ -1,0 +1,11 @@
+# Build artifacts and caches
+*.exe
+__pycache__/
+*.pyc
+
+# Local/editor files
+.vscode/
+.idea/
+.DS_Store
+
+# Large raw files are tracked intentionally in this research export.

@@ -1,0 +1,69 @@
+
+=== Experiment 10: rolling-window rule on small networks ===
+dataset	method	W	k	sided	stop_at	of_merges	K	Q	F1	NMI
+karate	Louvain	-	-	-	-1	31	4	0.416	0.689	0.498
+karate	GRAZ t=2	-	-	-	-1	31	16	0.186	0.310	0.369
+karate	CNM-full	-	-	-	31	31	3	0.381	0.761	0.565
+karate	roll-1sided	10	1.75	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	10	1.75	2	21	31	13	0.269	0.377	0.375
+karate	roll-1sided	10	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	10	2.00	2	21	31	13	0.269	0.377	0.375
+karate	roll-1sided	10	2.50	1	31	31	3	0.381	0.761	0.565
+karate	roll-2sided	10	2.50	2	21	31	13	0.269	0.377	0.375
+karate	roll-1sided	15	1.75	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	15	1.75	2	21	31	13	0.269	0.377	0.375
+karate	roll-1sided	15	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	15	2.00	2	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	15	2.50	1	31	31	3	0.381	0.761	0.565
+karate	roll-2sided	15	2.50	2	31	31	3	0.381	0.761	0.565
+karate	roll-1sided	20	1.75	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	20	1.75	2	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	20	2.00	1	30	31	4	0.376	0.671	0.537
+karate	roll-2sided	20	2.00	2	30	31	4	0.376	0.671	0.537
+karate	roll-1sided	20	2.50	1	31	31	3	0.381	0.761	0.565
+karate	roll-2sided	20	2.50	2	31	31	3	0.381	0.761	0.565
+polblogs	Louvain	-	-	-	-1	1482	4	0.295	0.664	0.457
+polblogs	GRAZ t=2	-	-	-	-1	1482	27	0.267	0.354	0.274
+polblogs	CNM-full	-	-	-	1482	1482	8	0.349	0.613	0.834
+polblogs	roll-1sided	10	1.75	1	18	1482	1472	0.001	0.005	0.173
+polblogs	roll-2sided	10	1.75	2	18	1482	1472	0.001	0.005	0.173
+polblogs	roll-1sided	10	2.00	1	18	1482	1472	0.001	0.005	0.173
+polblogs	roll-2sided	10	2.00	2	18	1482	1472	0.001	0.005	0.173
+polblogs	roll-1sided	10	2.50	1	21	1482	1469	0.001	0.005	0.173
+polblogs	roll-2sided	10	2.50	2	21	1482	1469	0.001	0.005	0.173
+polblogs	roll-1sided	15	1.75	1	21	1482	1469	0.001	0.005	0.173
+polblogs	roll-2sided	15	1.75	2	21	1482	1469	0.001	0.005	0.173
+polblogs	roll-1sided	15	2.00	1	21	1482	1469	0.001	0.005	0.173
+polblogs	roll-2sided	15	2.00	2	21	1482	1469	0.001	0.005	0.173
+polblogs	roll-1sided	15	2.50	1	47	1482	1443	0.004	0.005	0.173
+polblogs	roll-2sided	15	2.50	2	47	1482	1443	0.004	0.005	0.173
+polblogs	roll-1sided	20	1.75	1	26	1482	1464	0.002	0.005	0.173
+polblogs	roll-2sided	20	1.75	2	26	1482	1464	0.002	0.005	0.173
+polblogs	roll-1sided	20	2.00	1	26	1482	1464	0.002	0.005	0.173
+polblogs	roll-2sided	20	2.00	2	26	1482	1464	0.002	0.005	0.173
+polblogs	roll-1sided	20	2.50	1	47	1482	1443	0.004	0.005	0.173
+polblogs	roll-2sided	20	2.50	2	47	1482	1443	0.004	0.005	0.173
+email	Louvain	-	-	-	-1	977	8	0.416	0.430	0.592
+email	GRAZ t=2	-	-	-	-1	977	18	0.410	0.387	0.637
+email	CNM-full	-	-	-	977	977	9	0.351	0.317	0.456
+email	roll-1sided	10	1.75	1	43	977	943	0.016	0.150	0.659
+email	roll-2sided	10	1.75	2	10	977	976	-0.001	0.143	0.651
+email	roll-1sided	10	2.00	1	43	977	943	0.016	0.150	0.659
+email	roll-2sided	10	2.00	2	10	977	976	-0.001	0.143	0.651
+email	roll-1sided	10	2.50	1	43	977	943	0.016	0.150	0.659
+email	roll-2sided	10	2.50	2	36	977	950	0.011	0.149	0.657
+email	roll-1sided	15	1.75	1	43	977	943	0.016	0.150	0.659
+email	roll-2sided	15	1.75	2	15	977	971	-0.000	0.145	0.652
+email	roll-1sided	15	2.00	1	43	977	943	0.016	0.150	0.659
+email	roll-2sided	15	2.00	2	15	977	971	-0.000	0.145	0.652
+email	roll-1sided	15	2.50	1	103	977	883	0.054	0.156	0.657
+email	roll-2sided	15	2.50	2	36	977	950	0.011	0.149	0.657
+email	roll-1sided	20	1.75	1	43	977	943	0.016	0.150	0.659
+email	roll-2sided	20	1.75	2	20	977	966	0.002	0.146	0.653
+email	roll-1sided	20	2.00	1	44	977	942	0.017	0.150	0.659
+email	roll-2sided	20	2.00	2	21	977	965	0.003	0.146	0.653
+email	roll-1sided	20	2.50	1	210	977	776	0.097	0.160	0.651
+email	roll-2sided	20	2.50	2	68	977	918	0.030	0.153	0.658
+
+=== Experiment 9: rolling-window dQ stopping rule (large graphs) ===
+  (skipped: pass large=edges[:labels])

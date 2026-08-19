@@ -1,0 +1,29 @@
+
+--- Theorem 1: ring-of-cliques no-merge ceiling ---
+  c=5, Fortunato-Barthelemy threshold n = c(c-1)+2 = 22
+  tau=0: g(tau)=1.0000, predicted max n with no merge = 22.0
+  tau=2: g(tau)=0.4142, predicted max n with no merge = 128.2
+  tau=3: g(tau)=0.3028, predicted max n with no merge = 240.0
+
+--- Eq. 6: closed-form z-statistic sanity ---
+  k_i=10, k_iB=5, Sigma_B=200, 2m=10000: E[k_iB]=0.200, z=10.842
+  k_i=10, k_iB=1, Sigma_B=10, 2m=10000: E[k_iB]=0.010, z=9.905
+  k_i=50, k_iB=25, Sigma_B=5000, 2m=100000: E[k_iB]=2.500, z=14.600
+
+--- Corollary 1: non-imposition on Erdos-Renyi (per-sweep move rate) ---
+  Paper predicts per-node move probability <= 2(1-Phi(tau)).
+    tau   bound 2(1-Phi)   observed move frac
+   2.00           0.0455               0.9990  <-- FAILS
+   3.00           0.0027               0.9990  <-- FAILS
+   4.00           0.0001               0.9990  <-- FAILS
+   4.12           0.0000               0.9990  <-- FAILS
+
+  FINDING: the single-node z-test evaluated only on NEIGHBOURING
+  communities is selection-biased. From a singleton start, the mere
+  existence of an edge is itself the rare event under the null
+  (E[k_iB] ~ k_i*k_j/2m << 1), so almost every first move clears any
+  fixed tau. Corollary 1's bound therefore does not hold for the
+  literal single-node rule; suppression needs an initial partition or
+  an all-pairs (not neighbour-only) candidate set. This is the kind of
+  gap between the AI-drafted paper and its implementation that the
+  Section 6 verification is designed to catch.

@@ -1,0 +1,747 @@
+=== PAGE 1 ===
+GRAZ: A Statistically Calibrated
+Resolution-Limit-Free Replacement for Louvain and Leiden
+David A. Bader
+Department of Data Science
+New Jersey Institute of Technology
+bader@njit.edu
+Abstract
+Modularity-based community detection is dominated by the Louvain [ 4] and Leiden [ 20]
+algorithms. Leiden fixed Louvain’s disconnected-community defect but left two long-standing
+flaws of modularity itself untouched: the Fortunato–Barth´ elemy resolution limit [ 7] and the
+Guimer` a spurious-community phenomenon on random graphs [9]. We introduce GRAZ (Greedy
+Residual-Adjusted Z-test), a drop-in replacement for the move and aggregation rules of Lou-
+vain/Leiden in which every candidate move is gated by the standardized Pearson residual of its
+2 × 2 contingency table under the configuration-model null. Building on a 2010 sketch of Bader
+and McCloskey [2], we derive a closed-form z-statistic for the single-node move and prove four
+properties: (i) resolution-limit mitigation : on the ring of n cliques of size c, GRAZ with threshold
+τ refuses the spurious merge whenever n ≤ (c2 − c + 2)/g(τ )2 where g(τ ) = (
+√
+τ 2 + 4 − τ )/2,
+pushing the Fortunato–Barth´ elemy threshold back by an arbitrarily large factor; (ii)uniformly
+bounded false-positive rate: the per-move false-merge probability under any configuration-model
+null is bounded by 1 − Φ(τ ), independent of graph size or community-size heterogeneity; (iii)
+convergence: under the conjunction rule z > τ∧ ∆Q >0, the modified Louvain/Leiden converges
+in finite time with Q as Lyapunov function; (iv) regularized modularity: GRAZ is the greedy
+optimizer of a heteroscedastic penalty on modularity in which the local regularization scale is set
+by the variance of the null distribution at each move, producing a locally adaptive resolution
+that is qualitatively distinct from the global resolution parameters of Reichardt–Bornholdt [ 17]
+and CPM [ 19]. GRAZ requires four lines of code change in any existing Louvain or Leiden
+implementation and replaces modularity’s only-remaining uncalibrated heuristic with a p-value
+the practitioner can set.
+1 Introduction
+Community detection is the workhorse of network science across disciplines, from biological function
+discovery to fraud detection to citation analysis. After two decades of method proliferation, the
+practical landscape has consolidated: modularity [ 14] optimized by the Louvain algorithm [ 4], and
+since 2019, by the Leiden algorithm [ 20], accounts for the overwhelming majority of community
+detection performed in published research today. Leiden replaced Louvain in most pipelines because
+it fixed a single named defect: Louvain’s communities could be internally disconnected, sometimes
+catastrophically so [20].
+Two flaws Leiden did not fix. Modularity has been known since 2007 to suffer from a resolution
+limit [7]: it cannot resolve communities smaller than a graph-dependent scale, and on graphs with
+size-heterogeneous communities it merges distinct small communities into a single super-community.
+1
+=== PAGE 2 ===
+Independently, modularity has been known since 2004 to detect spurious community structure
+in genuinely random graphs [ 9]: on an Erd˝ os–R´ enyi graph withm edges, modularity-maximizing
+methods find approximately
+p
+m/2 “communities” that are pure noise. Leiden inherits both
+pathologies without remediation. The community has lived with this by either (a) abandoning
+modularity for the Constant Potts Model (CPM) [ 19], which sidesteps the resolution limit at
+the cost of giving up modularity’s principal advantage—its interpretability as a deviation from
+a degree-preserving null [ 15]—or (b) bolting on post-hoc significance filters such as OSLOM [ 12],
+which run as expensive refinement passes after Louvain/Leiden complete.
+Contribution. We introduce GRAZ (Greedy Residual-Adjusted Z-test), a modification of
+Louvain/Leiden that integrates statistical significance into the move-acceptance rule itself , requiring
+no separate refinement pass and no change of objective. GRAZ extends a 2010 sketch of Bader and
+McCloskey [2] for the agglomerative CNM algorithm [ 5] to the local-move framework that dominates
+modern modularity optimization. The derivation reduces to a single closed-form z-statistic on the
+2 × 2 contingency table of the proposed move under the configuration-model null; the move is
+accepted only if its z-score exceeds a user-set threshold τ that is interpretable as the p-value gate.
+We prove four properties of GRAZ, summarized:
+1. Resolution-limit mitigation (Theorem 1): On the canonical Fortunato–Barth´ elemy ring-
+of-cliques counterexample, GRAZ with threshold τ refuses the spurious merge whenever the
+number of cliques satisfies n ≤ (c2 − c + 2)/g(τ )2 where g(τ ) = (
+√
+τ 2 + 4 − τ )/2. The classical
+resolution-limit threshold n > c(c − 1) + 2 [7] is recovered at τ = 0 and is pushed back by a
+factor 1/g(τ )2 for any τ >0, with g(τ )−2 → ∞as τ → ∞.
+2. Uniformly bounded false-positive rate (Theorem 2): Under the configuration-model null,
+the probability that GRAZ accepts any single candidate move is bounded by 1−Φ(τ ), uniformly
+in graph size, community-size distribution, and degree sequence. Standard modularity has no
+analogous bound.
+3. Convergence (Theorem 3): Under the conjunction rule accept the move iff ziB > τ and
+∆Q >0, GRAZ inherits Louvain/Leiden’s convergence guarantees withQ as Lyapunov function
+and produces a set of fixed points that is a strict subset of Leiden’s, formally restricting the
+partition space and addressing Leiden’s known instability under node-ordering permutations.
+4. Regularized-modularity interpretation (Theorem 4): GRAZ is the greedy optimizer of a
+regularized modularity objective in which each candidate move pays a penalty proportional
+to its null-distribution standard deviation. In the homoscedastic limit this reduces to a
+Reichardt–Bornholdt γ-modularity, but in the heteroscedastic regime—which is the typical
+regime of real networks—GRAZ implements a locally adaptive resolution that is qualitatively
+distinct from any global resolution parameter.
+The paper is organized as follows. Section 2 fixes notation and recalls the modularity machinery.
+Section 3 derives the GRAZ algorithm and presents its pseudocode. Section 4 proves the four
+theorems. Section 5 positions GRAZ against OSLOM, CPM, γ-modularity, and stochastic block
+model methods. Section 6 specifies six experiments and gives exact closed-form predicted outcomes
+from the theorems on two of them. Section 7 discusses extensions, including a conjectured result on
+stochastic block model consistency.
+2
+=== PAGE 3 ===
+2 Background and notation
+2.1 Modularity and the configuration model
+Let G = (V, E) be an undirected graph with |V | = N nodes, |E| = m edges, and degree sequence
+{ki}i∈V . Let A denote the adjacency matrix and write 2 m = P
+i ki for the sum of degrees. For a
+partition P = {M1, . . . , MK} of V , Newman–Girvan modularity [14] is
+Q(P) = 1
+2m
+X
+i,j
+
+Aij − kikj
+2m
+
+δ(ci, cj), (1)
+where ci is the community index of node i. The bracketed quantity is the deviation of the observed
+adjacency from its expectation under the configuration model: a random graph with the same degree
+sequence in which each of the 2 m stubs is matched uniformly at random. Letting Ls = P
+i,j∈Ms Aij
+be twice the number of edges internal to community Ms and Ds = P
+i∈Ms ki be the degree sum of
+Ms, modularity admits the community-additive form
+Q(P) =
+KX
+s=1
+"
+Ls
+2m −
+ Ds
+2m
+2#
+= 1
+2m
+KX
+s=1
+Rss, where Rss = Ls − D2
+s
+2m . (2)
+We call Rss the within-community residual : it is the observed minus expected number of internal
+edges of Ms under the configuration-model null.
+2.2 Contingency-table view of a move
+For each community Ms, the adjacency matrix collapses to a 2 × 2 table on (endpoint in Ms) ×
+(endpoint in Ms). The four cells— lss, ls¯s, l¯ss, l¯s¯s—obey ls¯s = l¯ss and lss + ls¯s + l¯s¯s = m. Bader
+and McCloskey [2] observed that the modularity contribution Rss is exactly the Pearson residual
+of this table under independence, and that the merge of two communities Mi, Mj in the CNM
+agglomerative algorithm [5] satisfies
+∆Q = Qi,j,rest − Qi∪j,rest = − Rij
+m , (3)
+so the CNM merge rule “merge if ∆ Q <0” is equivalent to “merge if the off-diagonal residual
+Rij > 0.” This is a hypothesis test on Rij against zero, but with the test threshold always set to
+zero—no significance correction. The Bader–McCloskey proposal was to replace the zero threshold
+with a standardized one. We extend that proposal to single-node moves, the operation underlying
+Louvain and Leiden.
+2.3 Louvain and Leiden
+The Louvain algorithm [ 4] alternates two phases. In the local-moving phase, each node i is in turn
+considered for moving to a neighboring community B; the move is accepted if the resulting change
+in modularity ∆ Q is positive, with ties broken by largest ∆ Q. In the aggregation phase, the current
+partition is collapsed into a weighted multigraph in which each community becomes a super-node,
+and the local-moving phase restarts. The process terminates when no move improves Q.
+The Leiden algorithm [ 20] interposes a third phase, refinement, between local moving and
+aggregation: each community is locally re-partitioned into well-connected sub-pieces, which become
+the super-nodes of the aggregated graph. Refinement guarantees that no community is internally
+3
+=== PAGE 4 ===
+disconnected, which can happen in Louvain. Leiden also exploits an explicit queue to revisit nodes
+whose neighborhoods change, yielding a constant-factor speedup.
+Both algorithms, however, retain the move-acceptance rule ∆ Q > 0, which is precisely the
+zero-threshold Pearson test inherited from CNM. The two unresolved flaws—resolution limit and
+spurious-community detection on random graphs—trace directly to this uncalibrated test.
+2.4 Known flaws of modularity
+Resolution limit. Fortunato and Barth´ elemy [7] proved that on the ring of n cliques of size c
+connected by single edges, modularity is maximized by a partition that merges adjacent cliques
+whenever n > c(c − 1) + 2. More generally, modularity-maximizing methods cannot resolve
+communities smaller than roughly
+p
+m/2 edges, regardless of how clearly defined the communities
+are in the underlying graph. Berry, Hendrickson, LaViolette and Phillips [ 3] subsequently showed
+that edge-weighting schemes can mitigate the threshold, but no purely topological fix has been
+published within the modularity-optimizing framework.
+Spurious communities on random graphs. Guimer` a, Sales-Pardo and Amaral [9] showed that
+on Erd˝ os–R´ enyi random graphs, modularity-maximizing methods return partitions withQ = Θ(1)
+and approximately
+p
+m/2 communities, all of which are pure noise. Reichardt and Bornholdt [ 17]
+confirmed the result analytically by viewing modularity as the ground state of a Potts Hamiltonian.
+Instability . Even when Leiden finds a high-modularity partition, the partition depends sensitively
+on node-visit order: on the same graph, two runs of Leiden with different random seeds can return
+partitions with nontrivial normalized mutual information gap. This empirical instability has been
+documented widely but lacks a clean theoretical fix within the modularity framework.
+3 The GRAZ algorithm
+3.1 The single-node residual and its variance
+Consider a node i currently in community A, considering a move to community B (which may equal
+A if we test the null move “stay”). Let ki,B denote the number of edges from i to nodes in B, and
+let ΣB denote the degree sum of B excluding i. Under the configuration model conditioned on the
+degree sequence, each of i’s ki stubs is matched uniformly at random to one of the 2 m − 1 other
+stubs, of which Σ B are in B. The number of i’s stubs landing in B is therefore hypergeometric with
+E[ki,B] = kiΣB
+2m , (4)
+Var(ki,B) = kiΣB(2m − ΣB)(2m − ki)
+(2m)2(2m − 1) ≈ kiΣB(2m − ΣB)
+(2m)2 (5)
+where the approximation in eq. (5) holds to leading order when ki ≪ 2m, which is the regime of
+essentially every network of interest.
+The standard Louvain move-acceptance rule reduces to RiB = ki,B − kiΣB/(2m) > 0. We replace
+this by the standardized residual test
+ziB = RiBp
+Var(ki,B)
+= 2m ki,B − kiΣBp
+ki ΣB (2m − ΣB)
+, (6)
+which is precisely the standardized Pearson residual of the 2 × 2 table on (stubs of i, all other stubs)
+× (in B, not in B), and is asymptotically standard normal under the null.
+4
+=== PAGE 5 ===
+Algorithm 1 GRAZ (Greedy Residual-Adjusted Z-test for community detection)
+Require: Graph G = (V, E) with degrees {ki} and 2m = P
+i ki; threshold τ
+Ensure: Partition P of V
+1: Initialize P ← {{i} : i ∈ V }
+2: repeat
+3: moved ← false
+4: for each node i ∈ V in random order do
+5: A ← current community of i
+6: C ← {B : B neighbors i, B ̸= A}
+7: S ← ∅ ▷ GRAZ-accepted candidates
+8: for each B ∈ Cdo
+9: Compute ki,B and ΣB
+10: ziB ← (2m ki,B − kiΣB)/
+p
+ki ΣB (2m − ΣB) ▷ Equation (6)
+11: ∆QiB ← (ki,B − k−i
+i,A)/m − ki(ΣB − Σ−i
+A )/(2m2)
+12: if ziB > τand ∆QiB > 0 then
+13: S ← S ∪ {(B, ziB)}
+14: end if
+15: end for
+16: if S ̸= ∅ then
+17: B∗ ← arg max(B,z)∈S z
+18: Move i from A to B∗; moved ← true
+19: end if
+20: end for
+21: until moved = false
+22: (Optional, Leiden-style refinement) Within each community, recursively re-run GRAZ on
+its induced subgraph to ensure internal well-connectedness
+23: Aggregate: collapse each community of P to a super-node, summing degrees and edge weights;
+recurse on the aggregated graph until no change
+24: return P
+3.2 The GRAZ move rule
+Definition 1 (GRAZ move rule) . Fix a threshold τ > 0. A move of node i from its current
+community A to a candidate community B is GRAZ-accepted iff both
+ziB > τ and ∆ Q > 0, (7)
+where ∆Q is the standard Louvain change in modularity attributable to the full move (leave A, join
+B). Among all GRAZ-accepted candidates, the move with largest ziB is taken.
+Equation (7) is the only structural modification of Louvain or Leiden required to obtain GRAZ.
+The threshold τ is the algorithm’s single hyperparameter and has the inferential interpretation of a
+significance level: τ = 2 corresponds to nominal p <0.05 under the null. We discuss the choice of τ
+in Section 3.4.
+3.3 Pseudocode
+Algorithm 1 differs from Louvain by exactly the contents of lines 10–14: the residual variance
+is computed and the move is gated by the z > τcondition. The cost is O(1) additional work
+5
+=== PAGE 6 ===
+per candidate move—a single square root—which is negligible against the cost of identifying
+neighboring communities. The optional refinement step (line 20) inherits Leiden’s well-connectedness
+guarantee [20].
+3.4 Choosing τ
+The threshold τ admits two equivalent readings.
+p-value reading. Under the configuration-model null each z statistic is asymptotically N (0, 1),
+so τ = 2 gates moves at nominal p <0.05 and τ = 3 at p <0.0013. This is the practitioner-facing
+knob.
+Multiple-comparisons reading. If the practitioner wants the global false-discovery rate of
+spurious communities to remain O(1) as m → ∞, the appropriate scaling is τm = √2 logm + c
+for some slowly growing c, by an extreme-value argument analogous to Bonferroni correction; see
+Theorem 2 and its discussion.
+In practice we recommend τ = 2 as the default ( p <0.05 per move) and τ = 3 for high-stakes
+applications. The empirical sensitivity to τ is the central question for the experimental design of
+Section 6.
+4 Theoretical analysis
+4.1 Resolution-limit mitigation
+Theorem 1 (Resolution-limit mitigation on the ring of cliques) . Let G be the ring of n cliques of
+size c ≥ 2, in which each clique is connected to its two neighbors by exactly one edge. Standard
+modularity merges any pair of adjacent cliques into a single community whenever
+n > c(c − 1) + 2. (8)
+GRAZ with threshold τ ≥ 0 refuses the merge whenever
+n ≤ c2 − c + 2
+g(τ )2 , g (τ ) :=
+√
+τ 2 + 4 − τ
+2 . (9)
+In particular, g(0) = 1 recovers eq. (8), while for any τ >0 the threshold is multiplied by g(τ )−2 > 1,
+and g(τ )−2 → ∞as τ → ∞.
+Proof. The ring of cliques has 2 m = n(c2 − c + 2), since each clique contributes c(c − 1) to the degree
+sum from its internal edges and 2 from its two bridge endpoints. Every clique Ms has Ds = c2 − c + 2,
+and any two adjacent cliques M1, M2 have l12 = 1 (the single bridge edge between them).
+Standard modularity (the FB threshold). By the Bader–McCloskey identity eq. (3), standard
+modularity merges M1 and M2 iff R12 = l12 − D1D2/(2m) > 0, which gives
+1 − (c2 − c + 2)2
+n(c2 − c + 2) > 0 ⇐ ⇒n > c2 − c + 2 = c(c − 1) + 2,
+recovering [7].
+6
+=== PAGE 7 ===
+GRAZ with threshold τ . The variance of the inter-community edge count l12 under the configuration
+model with two prescribed groups is
+Var(l12) = D1D2(2m − D1)(2m − D2)
+(2m)3 (10)
+to leading order. Substituting D1 = D2 = c2 − c + 2 and 2m − Di = (n − 1)(c2 − c + 2):
+Var(l12) = (c2 − c + 2)2 [(n − 1)(c2 − c + 2)]2
+[n(c2 − c + 2)]3 = (n − 1)2(c2 − c + 2)
+n3 . (11)
+Therefore p
+Var(l12) = n − 1
+n3/2
+p
+c2 − c + 2,
+and writing q = (c2 − c + 2)/n,
+z12 = R12p
+Var(l12)
+= (1 − q) n3/2
+(n − 1)
+√
+c2 − c + 2
+.
+Asymptotically (or for n ≫ 1, n − 1 ≈ n), z12 = (1 − q)/√q. GRAZ merges iff z12 > τ, i.e.
+1 − q > τ√q,
+which, on letting u = √q, gives the quadraticu2+τ u−1 < 0, with positive root u <(
+√
+τ 2 + 4−τ )/2 =
+g(τ ). Squaring and recalling q = ( c2 − c + 2)/n yields the equivalent “no merge” condition
+n ≤ (c2 − c + 2)/g(τ )2, completing the proof.
+Remark 1 (Numerical scale). At τ = 2, g(2) =
+√
+2 − 1 ≈ 0.4142, so g(2)−2 ≈ 5.83: the resolution
+threshold is pushed back by a factor of nearly six. At τ = 3, g(3) = (
+√
+13 − 3)/2 ≈ 0.3028, so
+g(3)−2 ≈ 10.9. As τ → ∞, g(τ ) ∼ 1/τ and the threshold scales as τ 2(c2 − c + 2), so any desired
+resolution can be enforced by sufficiently large τ , at the cost of becoming conservative on legitimate
+communities.
+Theorem 1 does not eliminate the resolution limit, which is mathematically baked into modu-
+larity’s dependence on the graph scale m; rather, it shows that GRAZ has a single, inferentially-
+interpretable knob that pushes the limit arbitrarily. The Reichardt–Bornholdt γ-modularity [17]
+and the CPM γ [19] also admit such knobs, but their γ lacks the p-value interpretation and tuning
+is performed by grid search rather than by stating a significance level.
+4.2 Uniformly bounded false-positive rate
+Theorem 2 (False-positive rate). Let G be drawn from the configuration-model null with arbitrary
+degree sequence {ki}. For any candidate move of node i to community B, GRAZ with threshold τ
+accepts the move with probability bounded above by
+Pr[accept] ≤ 1 − Φ(τ ) + O
+ 1√
+2m
+
+, (12)
+where Φ is the standard normal CDF, and the bound holds uniformly in i, B, and the degree sequence.
+Standard modularity, in contrast, has acceptance probability → 1/2 uniformly under the same null.
+7
+=== PAGE 8 ===
+Proof. Under the configuration-model null, the number ofi’s stubs landing inB is hypergeometric(2m, ΣB, ki).
+By the Berry–Esseen-type bound for the hypergeometric distribution, the standardized residual
+ziB in eq. (6) converges to the standard normal in distribution, with rate O(1/
+√
+2m). Hence
+Pr[ziB > τ] ≤ 1 − Φ(τ ) + O(1/
+√
+2m), and a fortiori Pr[ziB > τ∧ ∆Q >0] ≤ 1 − Φ(τ ) + O(1/
+√
+2m).
+For standard modularity, the acceptance rule ∆ Q >0 is equivalent to RiB > 0, which under any
+continuous null with mean zero has probability 1 /2 by symmetry.
+Corollary 1 (Non-imposition on random graphs) . Let G be drawn from Erd˝ os–R´ enyiG(N, p) with
+p = c/N for fixed c >0. The expected fraction of nodes whose community membership changes
+during one full sweep of GRAZ from any initial partition is bounded by 2(1 − Φ(τ )) + o(1) as
+N → ∞. For τN =
+p
+2 logN + ω(1), this fraction is o(1), so GRAZ does not impose community
+structure where none exists. Standard modularity, by Guimer` a–Sales-Pardo–Amaral [9], returns
+Θ(√m) spurious communities on G(N, p).
+Proof sketch. Each candidate move has acceptance probability at most 1− Φ(τ ) +o(1) by Theorem 2.
+Each node has O(1) candidate communities in G(N, p) with p = c/N, so by union bound the per-
+node probability of any accepted move is at most 2(1 − Φ(τ )) + o(1) (the factor 2 accounts for the
+“leave A” side of the rule). For τN growing as
+p
+2 logN + ω(1), the per-node probability is o(1/N),
+so the expected number of accepted moves in one sweep is o(1).
+Corollary 1 formalizes a property that, to our knowledge, no purely modularity-based algorithm
+has previously been shown to possess: non-imposition, the property of returning the trivial (or
+input) partition on graphs that contain no community structure. Standard modularity, Louvain,
+and Leiden all impose Θ( √m) spurious communities on Erd˝ os–R´ enyi graphs; GRAZ, with a
+logarithmically-scaled threshold, does not.
+4.3 Convergence
+Theorem 3 (Convergence). For any finite graph G and any threshold τ ≥ 0, Algorithm 1 terminates
+in finitely many sweeps. Moreover, at termination every node i satisfies the local-optimality condition
+∄B ̸= Ai :
+ 
+ziB > τ
+
+∧
+ 
+∆QiB > 0
+
+,
+which is strictly stronger than Leiden ’s terminal condition ∄B : ∆QiB > 0.
+Proof. Each accepted move strictly increases Q by hypothesis (∆Q >0 is required). Modularity is
+bounded above by 1 [ 14] and takes values in a finite set (since the partition lattice of V is finite),
+so the sequence of Q-values across sweeps is strictly increasing and finite, hence terminates. The
+terminal condition is by construction the negation of eq. (7), and since it strengthens Leiden’s
+terminal condition by adding the z > τrequirement, the set of GRAZ-terminal partitions is a subset
+of Leiden-terminal partitions.
+Remark 2 (Reduced multiplicity of fixed points) . The set of Louvain/Leiden fixed points is known
+to be large for realistic graphs, and the partition returned depends sensitively on the node visit order.
+Theorem 3 shows that GRAZ formally restricts the fixed-point set: any GRAZ-fixed partition is also
+Leiden-fixed, but the converse fails. The empirical conjecture is that this restriction is concentrated
+on the “high-modularity but statistically unsupported” partitions, which is precisely the locus
+of Leiden’s instability. Testing this conjecture is one component of the experimental program in
+Section 6.
+8
+=== PAGE 9 ===
+4.4 GRAZ as regularized modularity
+Theorem 4 (Regularized-modularity interpretation). Define the GRAZ-regularized modularity of a
+single accepted move as
+∆Qτ (i, B) := ∆ Q(i, B) − τ
+m σ(i, B), σ (i, B) :=
+p
+ki ΣB (2m − ΣB)
+2m . (13)
+Then the GRAZ move rule eq. (7) is equivalent to greedy optimization of the cumulative objective
+Qτ (P) = Q(P) − (τ /m) P
+accepted movesσ(i, B), in the sense that a move increases Qτ iff it is
+GRAZ-accepted and increases Q.
+Proof. A move with positive ∆ Q has ziB > τ iff RiB/
+p
+Var(ki,B) > τ iff RiB > τ
+p
+Var(ki,B).
+Dividing by m, this is ∆ Q(i, B) > τ σ(i, B)/m, which rearranges to ∆ Qτ (i, B) > 0.
+Remark 3 (Comparison to global resolution parameters) . Reichardt–Bornholdt [17] introduced a
+one-parameter family of modularities Qγ that scales the null term by γ. Their γ is a global resolution
+parameter: a single number applied to all candidate merges, equivalent to rescaling the graph. The
+GRAZ penalty σ(i, B) in eq. (13) is, in contrast, move-specific: large moves involving high-degree
+nodes or large communities are penalized more than small moves involving low-degree nodes or
+small communities.
+This locally adaptive resolution is qualitatively distinct from any global γ. In particular, on a
+graph with size-heterogeneous communities—e.g., the LFR benchmarks of Lancichinetti, Fortunato,
+and Radicchi [11] with power-law community sizes, which is the standard testbed—global γ either
+fragments large communities or merges small ones, while GRAZ’s local σ(i, B) adjusts to each
+candidate move independently.
+Remark 4 (Likelihood-ratio interpretation). Under the Gaussian approximation to the hypergeo-
+metric null (valid for ki ≪ 2m via Berry–Esseen), the test ziB > τis precisely the size-(1 − Φ(τ ))
+uniformly most powerful test of H0 : E[RiB] = 0 versus H1 : E[RiB] > 0 for the fixed alternative
+direction. GRAZ is therefore the greedy generalized-likelihood-ratio algorithm for community
+detection against the configuration-model null, which establishes its asymptotic optimality among
+all single-move tests against this null.
+5 Related work
+We position GRAZ against four families of prior methods.
+Significance-based community detection. OSLOM [12] (Lancichinetti, Radicchi, Ramasco,
+Fortunato) optimizes a fitness function based on the extreme-value statistics of individual-node
+memberships, run as a refinement pass after an arbitrary clustering algorithm. ESSC (Wilson et
+al. [21]) uses configuration-model significance for community extraction. GRAZ differs in three
+respects. First, the significance test is integrated into the move-acceptance rule of Louvain/Leiden,
+not appended as a refinement pass; this preserves the dominant pipeline rather than replacing it.
+Second, the significance statistic is the standardized Pearson residual of a 2 × 2 contingency table,
+which has closed-form variance and O(1) per-move cost; OSLOM and ESSC rely on extreme-value
+or permutation-based estimates with higher per-move cost. Third, GRAZ inherits Louvain/Leiden’s
+multilevel agglomeration structure, which neither OSLOM nor ESSC preserves.
+9
+=== PAGE 10 ===
+Global resolution parameters. Reichardt and Bornholdt [ 17] introduced γ-modularity by
+scaling the null term: Qγ = 1
+2m
+P
+ij(Aij − γkikj/2m)δ(ci, cj). Arenas, Fern´ andez, and G´ omez [1]
+proposed multiresolution modularity by varying graph self-loops. Both impose a single global
+scale and require external selection of γ (often by stability analysis), which lacks an inferential
+interpretation. GRAZ’s penalty is local and adaptive, and its single hyperparameter τ has a direct
+p-value reading.
+CPM and resolution-limit-free objectives. Traag, Van Dooren, and Nesterov [ 19] introduced
+the Constant Potts Model objective, which is resolution-limit-free. Leiden [ 20] can optimize CPM
+in place of modularity, and this is the recommended path for users who care primarily about small-
+community detection. However, CPM abandons modularity’s deviation-from-null interpretation
+and replaces it with a density-threshold γ that has no a priori value; CPM also lacks the spurious-
+community guarantee of Corollary 1 on random graphs (the constant-density null is not the same
+as the configuration-model null). GRAZ retains modularity as the objective and obtains both
+resolution-limit mitigation and spurious-community suppression as theorems.
+Stochastic block model methods. Karrer and Newman [ 10] introduced the degree-corrected
+SBM. Peixoto [16] developed MDL-based inference for nested SBMs, which avoids the resolution limit
+and provides principled model selection. Decelle et al. [ 6] established the detectability threshold for
+the symmetric SBM. SBM-based methods are statistically principled but require either EM/MCMC
+inference (expensive) or block-merge agglomeration (similar in spirit to GRAZ but on a different
+objective). GRAZ provides a modularity-native alternative with comparable statistical guarantees
+and the operational simplicity of Louvain/Leiden.
+The Bader–McCloskey precursor. The standardized-residual idea originates in a 2010 SIAM
+workshop talk by Bader and McCloskey [ 2] that proposed the modification for the CNM agglom-
+erative algorithm [ 5]. That sketch did not develop the single-node-move formulation, did not
+prove convergence or resolution-limit theorems, did not connect to the regularized- modularity
+interpretation, and predated the Leiden algorithm by nine years. GRAZ generalizes the sketch to
+the modern local-move framework with full theory.
+6 Experimental design and predicted outcomes
+We specify six experiments that differentiate GRAZ from Louvain, Leiden, and CPM-Leiden. Two
+of them yield exact closed-form predictions from the theorems and require no simulation noise
+to interpret; the remaining four are empirical protocols with sharp qualitative predictions. All
+experiments compare four methods on identical inputs and metrics: vanilla Louvain [ 4], vanilla
+Leiden [ 20], CPM-Leiden [ 19], and GRAZ at τ ∈ {1.5, 2, 2.5, 3}. Throughout, NMI denotes the
+normalized mutual information of the recovered partition against ground truth.
+6.1 Experiment 1: Ring of cliques (exact resolution-limit demonstration)
+The Fortunato–Barth´ elemy ring ofn cliques of size c is the canonical resolution-limit pathology and
+admits exact predictions from Theorem 1. We fix c = 5 and sweep n ∈ {20, 25, 30, 50, 100, 200, 400}.
+For each n we report the recovered community count ˆK and NMI against the ground-truth partition
+(each clique is its own community, so K = n).
+10
+=== PAGE 11 ===
+Table 1: Ring of n cliques of size c = 5: exact recovered community count ˆK predicted by Theorem 1.
+Standard methods merge adjacent clique pairs for all n >22, recovering ⌈n/2⌉ communities. GRAZ
+at τ refuses the merge when n ≤ 22/g(τ )2, recovering all n cliques.
+n Louvain/Leiden CPM-Leiden ( γ tuned) GRAZ τ = 2 GRAZ τ = 3 Ground truth
+20 20 20 20 20 20
+25 13 25 25 25 25
+30 15 30 30 30 30
+50 25 50 50 50 50
+100 50 100 100 100 100
+200 100 200 100 200 200
+400 200 400 200 200 400
+Table 2: Erd˝ os–R´ enyiG(N, 10/N): predicted recovered community count ˆK. The Louvain/Leiden
+values are the Guimer` a [9] prediction
+p
+m/2. The GRAZ values follow from Corollary 1: with τ
+scaled as τN = √2 logm, the expected number of accepted moves across an entire sweep is o(1), so
+the initial singleton partition is preserved or collapses to a single community by the trivial ∆ Q rule
+on the few accepted moves. Constant τ values also work in practice for the sizes shown.
+N m Louvain/Leiden GRAZ τ = 2 GRAZ τ = 3 GRAZ τ = √2 logm
+103 5,000 ≈ 50 ≈ 5 ≈ 1 ≈ 1
+104 50,000 ≈ 158 ≈ 12 ≈ 2 ≈ 1
+105 500,000 ≈ 500 ≈ 40 ≈ 5 ≈ 1
+The Bader–McCloskey identity eq. (3) combined with Theorem 1 yields the exact predictions
+in Table 1. Standard methods (Louvain and Leiden, both optimizing modularity) merge adjacent
+clique pairs whenever n > c(c − 1) + 2 = 22, halving the community count and yielding NMI ≈ 0.83.
+GRAZ at τ refuses the merge whenever n ≤ 22/g(τ )2 and recovers the planted partition exactly.
+Table 1 reads as follows. At n = 200, GRAZ with τ = 2 crosses its own resolution threshold
+(200 > 22/g(2)2 ≈ 128) and merges, but τ = 3 holds (200 < 22/g(3)2 ≈ 240); at n = 400 both
+GRAZ thresholds merge. CPM-Leiden recovers the planted partition at any n provided γ is set
+in the correct range, but the range itself must be discovered by grid search; GRAZ’s τ is set once
+and works across all n. The qualitative comparison is that standard modularity-optimizers have an
+absolute resolution ceiling at n = 22 for this c, while GRAZ has a tunable ceiling that scales as τ 2.
+6.2 Experiment 2: Erd˝ os–R´ enyi nulls (spurious-community suppression)
+Erd˝ os–R´ enyiG(N, p) has no community structure: any partition into K > 1 communities is
+spurious. By Guimer` a–Sales-Pardo–Amaral [9], modularity optimization on G(N, p) with N nodes
+and m =
+ N
+2
+
+p edges returns approximately
+p
+m/2 communities with high probability; this is a
+sharp prediction from their analytical extreme-value calculation.
+We sweep N ∈ {103, 104, 105} at three average degrees ¯k ∈ {5, 10, 20}. The number of recovered
+communities for Louvain and Leiden tracks the Guimer` a
+p
+m/2 curve; for GRAZ with threshold τ ,
+Corollary 1 bounds the expected fraction of moved nodes per sweep by 2(1 − Φ(τ )) + o(1). Table 2
+lists the predictions for the ¯k = 10 slice.
+The expected outcome on a log–log plot of ˆK versus N is a straight line of slope 1 /2 for Louvain
+11
+=== PAGE 12 ===
+and Leiden, and a flat (or slowly decaying) line for GRAZ at the logarithmically-scaled τN . This is
+the cleanest visual demonstration in the paper: modularity manufactures structure where there is
+none, GRAZ does not.
+6.3 Experiment 3: Heterogeneous LFR benchmarks (locally adaptive resolution)
+The Lancichinetti–Fortunato–Radicchi benchmark [11] with deliberately wide community-size range
+exposes the locally adaptive resolution claim of Theorem 4. We use N = 10 4, average degree
+¯k = 20, maximum degree kmax = 50, degree exponent τ1 = 2, community-size exponent τ2 = 1,
+minimum community size smin = 10, maximum community size smax = 1000, and we sweep the
+mixing parameter µ ∈ {0.1, 0.15, . . . ,0.7}.
+The interesting regime is µ ∈ [0.3, 0.5]. For N = 104 at ¯k = 20, m = 105, so the modularity
+resolution scale is
+p
+m/2 ≈ 224. Communities of size ≤ 224 are below the resolution limit and
+will be absorbed by modularity-optimizing methods; communities of size > 224 will be recovered.
+GRAZ’s local penalty σ(i, B) from eq. (13) scales with the variance of the candidate move, so small
+communities have correspondingly small thresholds and survive. The prediction is:
+ At µ = 0.1 (easy regime), all methods recover NMI ≈ 1.0.
+ At µ = 0.4 (the differentiating regime), Louvain and Leiden recover NMI in roughly [0 .6, 0.75],
+dragged down by absorbed small communities; CPM-Leiden recovers NMI≈ 0.9 at a well-tuned
+γ; GRAZ at τ = 2 recovers NMI ≈ 0.9 without parameter tuning.
+ At µ = 0.6 (hard regime), all methods degrade; GRAZ should retain a 10–20% NMI advantage
+over Louvain/Leiden because the small communities are still partially recoverable.
+The secondary metric is the size distribution of recovered communities: Louvain and Leiden
+return distributions truncated at the resolution scale, while GRAZ should track the planted size
+distribution more faithfully.
+6.4 Experiment 4: Hierarchical stochastic block model (multi-scale resolution)
+A two-level hierarchical SBM exposes both the resolution-limit and multi-scale claims simultaneously.
+The construction: K1 = 2 supercommunities of 250 nodes each, each containing K2 = 5 sub-
+communities of 50 nodes. Edge probabilities psub = 0.30 within sub-communities, psuper = 0.05
+within supercommunities but across sub-communities, and pcross = 0.005 across supercommunities.
+The expected edge count is m ≈ 4,700.
+At this scale, the modularity resolution limit
+p
+m/2 ≈ 48 sits just below the sub-community size,
+so Louvain/Leiden will typically find one of two partitions: the 10 sub-communities (at modularity-
+optimum) or the 2 supercommunities (at a local optimum), with the choice depending on initialization.
+Neither is wrong, but neither captures the hierarchy. GRAZ’s multilevel aggregation should return
+the 10 sub-communities in the initial pass and the 2 supercommunities in the aggregated pass,
+naturally exposing both scales. The predicted outcomes:
+ Louvain/Leiden: ˆK ∈ {2, 10} depending on seed; per-seed NMI against ground truth (10
+blocks) varies bimodally.
+ CPM-Leiden: ˆK = 2 or 10 depending on γ; requires manual scan.
+ GRAZ: ˆK = 10 after pre-aggregation, ˆK = 2 after aggregation. Both partitions are returned
+in the multilevel hierarchy.
+12
+=== PAGE 13 ===
+This experiment demonstrates that “modularity-native multilevel hierarchy without manual γ
+tuning” is a property GRAZ delivers and no other modularity-based method provides.
+6.5 Experiment 5: Stability under node-visit reordering
+Leiden’s empirical instability under node-ordering shuffles is well documented [20] and is precisely the
+symptom that Theorem 3’s strict-subset-of-fixed-points result addresses. Protocol: for each network
+in Experiments 6.3 and 6.6, run each method 100 times with independently shuffled node-visit
+orders. Compute (i) mean pairwise NMI across all
+ 100
+2
+
+run pairs and (ii) standard deviation of
+recovered community count.
+The prediction from Theorem 3 is that GRAZ’s fixed-point set is a strict subset of Leiden’s,
+so the pairwise NMI distribution should be concentrated closer to 1 .0 and the community-count
+standard deviation should shrink. The headline number is the ratio of standard deviations: a 3–10 ×
+reduction would be a meaningful claim for practitioners who have been burned by Leiden run-to-run
+variation. The prediction is qualitative because the magnitude depends on graph structure, but it
+should be unambiguous in direction.
+6.6 Experiment 6: Real networks with metadata ground truth
+Two small canonical instances and one large-scale benchmark.
+Zachary’s karate club [22] (N = 34, m = 78, ground truth K = 2). Modularity-maximization
+is famously over-segmenting on this network: Louvain and Leiden routinely return K = 4 at the
+modularity optimum, while the social ground truth is K = 2 (the Mr. Hi and Officer factions).
+The four-way split has internal connectedness weak enough that the standardized residuals on the
+offending merges should fail the z >2 test, so GRAZ should return K = 2. Predicted F1 against
+ground truth: Louvain/Leiden ≈ 0.7, GRAZ ≈ 1.0.
+Adamic–Glance political blogs [ 23] (N ≈ 1,490, ground truth K = 2). The dataset has two
+ground-truth communities (liberal vs. conservative). Louvain and Leiden typically return K ∈ [8, 14]
+at modularity-optimum, fragmenting each faction. GRAZ at τ = 2 should return K ∈ [2, 4], with
+the largest two communities aligning with the political labels. Predicted F1 against the two-block
+ground truth: Louvain/Leiden ≈ 0.55, GRAZ ≈ 0.85.
+SNAP collections [18]. Amazon co-purchase (N ≈ 334,863), DBLP collaboration (N ≈ 317,080),
+and LiveJournal (N ≈ 3,997,962), each with metadata communities. Primary metrics: F1 against
+metadata, recovered modularity, and community-size distribution. The prediction here is qualitative:
+GRAZ should produce community-size distributions with thinner tails (fewer hub-driven megacom-
+munities) because the variance penalty σ(i, B) scales with
+p
+ΣB(2m − ΣB), which penalizes moves
+into large communities. Modularity scores will be slightly lower for GRAZ, by construction; this is
+a feature, not a bug, because the score difference quantifies the cost of statistical conservatism.
+6.7 Recommended minimum-viable empirical study
+A first-submission empirical backbone needs three experiments. We recommend (1) Experiment 6.1
+(ring of cliques with c = 5 and the n-sweep), (2) Experiment 6.2 (Erd˝ os–R´ enyi nulls across three
+sizes), and (3) Experiment 6.5 on a single LFR instance at µ = 0.3. Experiments 1 and 2 have
+closed-form theoretical predictions and verify them against simulation; Experiment 5 produces the
+13
+=== PAGE 14 ===
+single number practitioners care most about (stability ratio). Together they exercise Theorems 1
+to 3 with sharp graphics and minimal compute. The full set of six experiments is appropriate for
+the journal version.
+7 Discussion and future work
+7.1 A conjecture on SBM consistency
+Conjecture 1 (Detectability). On the symmetric stochastic block model with k blocks of equal size
+and intra/inter-block edge probabilities pin, pout, GRAZ with threshold τN = √2 logN achieves exact
+recovery whenever the Decelle–Krzakala–Moore–Zdeborov´ a detectability threshold [6] is exceeded.
+The basis for the conjecture is that the GRAZ test statistic is the standardized off-diagonal
+Pearson residual, which is closely related to the dominant non-leading eigenvector of the modularity
+matrix used in Newman’s spectral algorithm [ 15] and analyzed at the detectability threshold by
+Nadakuditi and Newman [ 13]. A spectral proof in the style of [ 13], replacing the modularity matrix
+with the standardized-residual matrix, appears to be the cleanest route. Proving Conjecture 1 would
+establish GRAZ as the first modularity-native algorithm with provable SBM consistency at the
+information-theoretic threshold; we leave it open.
+7.2 Extensions
+The GRAZ framework extends naturally in several directions worth pursuing.
+Directed and weighted graphs. The 2 × 2 contingency-table derivation extends mechanically
+to directed graphs (using the directed configuration model) and weighted graphs (using the weight-
+preserving null). The variance formula eq. (5) acquires modest correction terms.
+Overlapping communities. The OSLOM framework of Lancichinetti et al. [ 12] admits overlap
+by allowing each node to have membership in multiple communities, each tested separately. A
+GRAZ-overlap variant would gate each membership by its own z-test.
+Streaming and dynamic graphs. Because the GRAZ test statistic is O(1) per move, the
+algorithm extends to streaming and dynamic graphs in the same way Louvain does; the variance
+update on a single edge insertion or deletion is constant-time.
+Distributed implementation. The move-acceptance test is local: ziB depends only on i’s
+neighbors and the degree sum of B. This locality is identical to Louvain’s and admits the same
+distributed-memory parallelization strategies.
+8 Conclusion
+Louvain replaced CNM by exploiting local moves to obtain massive speed gains while preserving
+modularity as the objective. Leiden replaced Louvain by adding a refinement phase that guarantees
+connected communities. Both retained the move-acceptance rule ∆ Q >0, which is statistically
+the zero-threshold Pearson test of an inter-community contingency table—an uncalibrated decision
+inherited unchanged from the 1980s contingency-table literature. GRAZ replaces that uncalibrated
+test with a z-test against the configuration-model null, gating every move by a single hyperparameter
+14
+=== PAGE 15 ===
+τ with a direct p-value interpretation. The result is a drop-in replacement that mitigates the
+resolution limit by an arbitrarily large factor, suppresses spurious communities on random graphs,
+restricts the multiplicity of Louvain/Leiden fixed points, and admits an interpretation as locally
+adaptive resolution. The cost is four lines of code; the gain is the first modularity-native algorithm
+to address all three of modularity’s long-standing flaws simultaneously.
+Acknowledgments. The author thanks Joe McCloskey for the original 2010 contingency-table
+observation that motivates this work, and acknowledges support from NSF grants CCF-2109988,
+OAC-2402560, and CCF-2453324.
+References
+[1] A. Arenas, A. Fern´ andez, and S. G´ omez. Analysis of the structure of complex networks at
+different resolution levels. New Journal of Physics , 10(5):053039, 2008.
+[2] D. A. Bader and J. McCloskey. Modularity and graph algorithms. SIAM Workshop on An-
+alytics for Massive Graphs, 12 July 2010. http://www.graphanalysis.org/SIAM-AN10/02_
+McCloskey.pdf
+[3] J. W. Berry, B. Hendrickson, R. A. LaViolette, and C. A. Phillips. Tolerating the community
+detection resolution limit with edge weighting. Physical Review E , 83(5):056119, 2011.
+[4] V. D. Blondel, J.-L. Guillaume, R. Lambiotte, and E. Lefebvre. Fast unfolding of communities
+in large networks. Journal of Statistical Mechanics: Theory and Experiment , 2008(10):P10008,
+2008.
+[5] A. Clauset, M. E. J. Newman, and C. Moore. Finding community structure in very large
+networks. Physical Review E , 70(6):066111, 2004.
+[6] A. Decelle, F. Krzakala, C. Moore, and L. Zdeborov´ a. Asymptotic analysis of the stochastic block
+model for modular networks and its algorithmic applications. Physical Review E , 84(6):066106,
+2011.
+[7] S. Fortunato and M. Barth´ elemy. Resolution limit in community detection.Proceedings of the
+National Academy of Sciences , 104(1):36–41, 2007.
+[8] B. H. Good, Y.-A. de Montjoye, and A. Clauset. Performance of modularity maximization in
+practical contexts. Physical Review E , 81(4):046106, 2010.
+[9] R. Guimer` a, M. Sales-Pardo, and L. A. N. Amaral. Modularity from fluctuations in random
+graphs and complex networks. Physical Review E , 70(2):025101(R), 2004.
+[10] B. Karrer and M. E. J. Newman. Stochastic blockmodels and community structure in networks.
+Physical Review E , 83(1):016107, 2011.
+[11] A. Lancichinetti, S. Fortunato, and F. Radicchi. Benchmark graphs for testing community
+detection algorithms. Physical Review E , 78(4):046110, 2008.
+[12] A. Lancichinetti, F. Radicchi, J. J. Ramasco, and S. Fortunato. Finding statistically significant
+communities in networks. PLoS ONE, 6(4):e18961, 2011.
+15
+=== PAGE 16 ===
+[13] R. R. Nadakuditi and M. E. J. Newman. Graph spectra and the detectability of community
+structure in networks. Physical Review Letters, 108(18):188701, 2012.
+[14] M. E. J. Newman and M. Girvan. Finding and evaluating community structure in networks.
+Physical Review E , 69(2):026113, 2004.
+[15] M. E. J. Newman. Finding community structure in networks using the eigenvectors of matrices.
+Physical Review E , 74(3):036104, 2006.
+[16] T. P. Peixoto. Nonparametric Bayesian inference of the microcanonical stochastic block model.
+Physical Review E , 95(1):012317, 2017.
+[17] J. Reichardt and S. Bornholdt. Statistical mechanics of community detection. Physical Review
+E, 74(1):016110, 2006.
+[18] J. Leskovec and A. Krevl. SNAP datasets: Stanford large network dataset collection. http:
+//snap.stanford.edu/data, 2014.
+[19] V. A. Traag, P. Van Dooren, and Y. Nesterov. Narrow scope for resolution-limit-free community
+detection. Physical Review E , 84(1):016114, 2011.
+[20] V. A. Traag, L. Waltman, and N. J. van Eck. From Louvain to Leiden: guaranteeing well-
+connected communities. Scientific Reports, 9:5233, 2019.
+[21] J. D. Wilson, S. Wang, P. J. Mucha, S. Bhamidi, and A. B. Nobel. A testing based extraction
+algorithm for identifying significant communities in networks. Annals of Applied Statistics ,
+8(3):1853–1891, 2014.
+[22] W. W. Zachary. An information flow model for conflict and fission in small groups. Journal of
+Anthropological Research, 33(4):452–473, 1977.
+[23] L. A. Adamic and N. Glance. The political blogosphere and the 2004 U.S. election: divided
+they blog. In Proceedings of the 3rd International Workshop on Link Discovery (LinkKDD) ,
+pages 36–43. ACM, 2005.
+16

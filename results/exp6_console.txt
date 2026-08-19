@@ -1,0 +1,37 @@
+
+=== Experiment 6: Real networks ===
+
+  -- Karate (N=34, m=78, truth_K=2) --
+     Louvain      K=    4  Q=0.420  F1=0.701  NMI=0.588
+     Leiden       K=    4  Q=0.420  F1=0.701  NMI=0.588
+     GRAZ (t=2)   K=   17  Q=0.177  F1=0.285  NMI=0.361
+     GRAZ (t=3)   K=   27  Q=0.057  F1=0.218  NMI=0.355
+
+  -- PolBlogs (N=1490, m=10260, truth_K=2) --
+     Louvain      K=    3  Q=0.361  F1=0.832  NMI=0.976
+     Leiden       K=    3  Q=0.361  F1=0.832  NMI=0.976
+     GRAZ (t=2)   K=   22  Q=0.283  F1=0.405  NMI=0.329
+     GRAZ (t=3)   K=   93  Q=0.210  F1=0.077  NMI=0.165
+
+  -- SNAP email-Eu-core (N=986, m=16064, truth_K=42) --
+     Louvain      K=    8  Q=0.413  F1=0.433  NMI=0.605
+     Leiden       K=    8  Q=0.413  F1=0.433  NMI=0.605
+     GRAZ (t=2)   K=   13  Q=0.411  F1=0.358  NMI=0.618
+     GRAZ (t=3)   K=   32  Q=0.398  F1=0.365  NMI=0.665
+
+  -- SNAP com-Amazon (N=9635, m=30276, truth_K=659) --
+     Louvain      K=  595  Q=0.996  F1=0.951  NMI=0.991
+     Leiden       K=  595  Q=0.996  F1=0.951  NMI=0.991
+     GRAZ (t=2)   K=  607  Q=0.995  F1=0.952  NMI=0.991
+     GRAZ (t=3)   K=  616  Q=0.995  F1=0.950  NMI=0.990
+
+  -- SNAP com-DBLP (N=11999, m=40988, truth_K=1049) --
+     Louvain      K=  353  Q=0.983  F1=0.598  NMI=0.882
+     Leiden       K=  353  Q=0.983  F1=0.598  NMI=0.882
+     GRAZ (t=2)   K=  482  Q=0.982  F1=0.671  NMI=0.916
+     GRAZ (t=3)   K=  561  Q=0.979  F1=0.713  NMI=0.928
+  wrote C:\Users\legol\OneDrive\Documents\Coding Projects\graz_project\results\exp6_real_networks.csv
+  wrote C:\Users\legol\OneDrive\Documents\Coding Projects\graz_project\results\figures\exp6_size_distribution.png
+  [experiment 6 took 10.7s]
+
+All done. Summary -> C:\Users\legol\OneDrive\Documents\Coding Projects\graz_project\results\summary.json
