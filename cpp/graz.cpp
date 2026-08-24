@@ -203,6 +203,10 @@ struct Graph {
     }
 };
 
+// Shared graph-plus-label container used by the synthetic generators, prepared
+// SNAP loaders, and the statistically independent edge split below.
+struct Dataset { int n; vector<std::pair<int, int>> edges; vector<int> gt; };
+
 // --------------------------------------------------------------------------- //
 //  Standardized Pearson residual of the single-node move (Eq. 6).
 // --------------------------------------------------------------------------- //
@@ -732,6 +736,316 @@ vector<int> cnm_labels_at(const CnmTrace &tr, size_t cut) {
     return out;
 }
 
+// --------------------------------------------------------------------------- //
+//  Bader--McCloskey merge path with a configuration-model calibration.
+//
+//  The 2010 proposal is a test on the off-diagonal residual R_ij of the
+//  collapsed contingency table, not on a node selected from its neighbours.
+//  For two current communities with stub volumes s_i and s_j, total N=2m, and
+//  observed cross-edge count l_ij, independence gives
+//
+//       E[l_ij] = s_i s_j / N
+//       Var[l_ij] = s_i s_j (N-s_i) (N-s_j) / (N^2 (N-1)).
+//
+//  The latter is the fixed-margin 2x2-table variance.  `bm_pair_z` is therefore
+//  the symmetric standardized residual S_ij requested by Bader--McCloskey.
+//  It is deliberately NOT Eq. 6, whose one-node/neighbour conditioning caused
+//  the earlier selection-bias failure.
+//
+//  A fixed z cutoff is still invalid here because the algorithm chooses the
+//  maximum among many pairs.  `bm_path_bootstrap` calibrates that maximum by
+//  replaying the ENTIRE greedy Bader path on degree-preserving configuration
+//  graphs.  At stage t, p_t is the Monte-Carlo tail probability of the observed
+//  maximum S_ij against null paths' stage-t maxima.  This accounts for both the
+//  candidate scan and the data-dependent greedy history.
+// --------------------------------------------------------------------------- //
+inline double bm_pair_z(double si, double sj, double lij, double m2) {
+    if (m2 <= 1.0 || si <= 0.0 || sj <= 0.0 || si >= m2 || sj >= m2) return 0.0;
+    double expected = si * sj / m2;
+    double var = si * sj * (m2 - si) * (m2 - sj) / (m2 * m2 * (m2 - 1.0));
+    if (var <= 0.0) return 0.0;
+    return (lij - expected) / std::sqrt(var);
+}
+
+struct BmTrace {
+    int n = 0;
+    vector<double> z;                   // selected max standardized residual
+    vector<double> dq;                  // its (positive) modularity increment
+    vector<std::pair<int, int>> merges; // survivor, absorbed
+    double build_ms = 0.0;
+};
+
+// Literal Bader--McCloskey greedy rule: merge the positive pair with largest
+// standardized residual.  This compact version is intentionally used only for
+// bootstrap-sized graphs; the production-scale CNM trace above remains separate.
+BmTrace bm_greedy_trace(const Graph &g, size_t max_merges = 0) {
+    auto t0 = Clock::now();
+    BmTrace tr; tr.n = g.n();
+    const int N = g.n();
+    const double m2 = g.m2;
+    if (N == 0 || m2 <= 1.0) { tr.build_ms = ms_since(t0); return tr; }
+
+    vector<std::unordered_map<int, double>> nbr(N);
+    for (int u = 0; u < N; ++u)
+        for (auto &e : g.adj[u]) if (e.first != u) nbr[u][e.first] += e.second;
+    vector<double> sigma = g.degree;
+    vector<char> alive(N, 1);
+    vector<unsigned> ver(N, 0);
+
+    struct Ent {
+        double z; int i, j; unsigned vi, vj;
+        bool operator<(const Ent &o) const { return z < o.z; }
+    };
+    auto score = [&](int i, int j, double w) { return bm_pair_z(sigma[i], sigma[j], w, m2); };
+    vector<Ent> pq;
+    for (int u = 0; u < N; ++u)
+        for (auto &kv : nbr[u]) if (u < kv.first) {
+            double z = score(u, kv.first, kv.second);
+            if (z > 0.0) pq.push_back({z, u, kv.first, 0u, 0u});
+        }
+    std::make_heap(pq.begin(), pq.end());
+
+    while (!pq.empty() && (max_merges == 0 || tr.merges.size() < max_merges)) {
+        Ent e = pq.front(); std::pop_heap(pq.begin(), pq.end()); pq.pop_back();
+        if (!alive[e.i] || !alive[e.j] || ver[e.i] != e.vi || ver[e.j] != e.vj) continue;
+        auto it = nbr[e.i].find(e.j);
+        double w = it == nbr[e.i].end() ? 0.0 : it->second;
+        double z = score(e.i, e.j, w);
+        if (z <= 0.0) break;
+
+        int a = e.i, b = e.j;
+        if (nbr[a].size() < nbr[b].size()) std::swap(a, b);
+        tr.z.push_back(z);
+        tr.dq.push_back(2.0 * (w / m2 - (sigma[a] / m2) * (sigma[b] / m2)));
+        tr.merges.push_back({a, b});
+
+        nbr[a].erase(b);
+        for (auto &kv : nbr[b]) {
+            int x = kv.first;
+            if (x == a) continue;
+            nbr[a][x] += kv.second;
+            nbr[x].erase(b);
+            nbr[x][a] = nbr[a][x];
+        }
+        nbr[b].clear();
+        sigma[a] += sigma[b]; sigma[b] = 0.0;
+        alive[b] = 0; ++ver[a]; ++ver[b];
+        for (auto &kv : nbr[a]) {
+            int x = kv.first;
+            if (!alive[x]) continue;
+            int i = std::min(a, x), j = std::max(a, x);
+            double zx = score(i, j, kv.second);
+            if (zx > 0.0) { pq.push_back({zx, i, j, ver[i], ver[j]}); std::push_heap(pq.begin(), pq.end()); }
+        }
+    }
+    tr.build_ms = ms_since(t0);
+    return tr;
+}
+
+vector<int> bm_labels_at(const BmTrace &tr, size_t cut) {
+    vector<int> p(tr.n); std::iota(p.begin(), p.end(), 0);
+    std::function<int(int)> find = [&](int x) {
+        while (p[x] != x) { p[x] = p[p[x]]; x = p[x]; }
+        return x;
+    };
+    cut = std::min(cut, tr.merges.size());
+    for (size_t t = 0; t < cut; ++t) {
+        int a = find(tr.merges[t].first), b = find(tr.merges[t].second);
+        if (a != b) p[b] = a;
+    }
+    std::map<int, int> remap;
+    vector<int> out(tr.n);
+    for (int u = 0; u < tr.n; ++u) {
+        int r = find(u);
+        if (!remap.count(r)) remap[r] = (int)remap.size();
+        out[u] = remap[r];
+    }
+    return out;
+}
+
+// Uniform stub matching: exact degree sequence, loops and parallel edges kept
+// as weighted edges.  The null is the configuration model used by modularity.
+Graph configuration_null(const Graph &g, std::mt19937 &rng) {
+    vector<int> stubs;
+    stubs.reserve((size_t)std::llround(g.m2));
+    for (int u = 0; u < g.n(); ++u) {
+        long long d = std::llround(g.degree[u]);
+        for (long long q = 0; q < d; ++q) stubs.push_back(u);
+    }
+    std::shuffle(stubs.begin(), stubs.end(), rng);
+    vector<std::pair<int, int>> edges; edges.reserve(stubs.size() / 2);
+    for (size_t k = 1; k < stubs.size(); k += 2) edges.push_back({stubs[k - 1], stubs[k]});
+    return Graph::from_edges(g.n(), edges);
+}
+
+struct BmBootstrapResult {
+    BmTrace observed;
+    vector<double> p_stage;
+    size_t cut = 0;                    // significant merges retained
+    int bootstraps = 0;
+    double alpha = 0.05;
+    double total_ms = 0.0;
+};
+
+BmBootstrapResult bm_path_bootstrap(const Graph &g, int B, double alpha, unsigned seed) {
+    auto t0 = Clock::now();
+    BmBootstrapResult out; out.bootstraps = B; out.alpha = alpha;
+    out.observed = bm_greedy_trace(g);
+    vector<vector<double>> nullz;
+    nullz.reserve(B);
+    std::mt19937 rng(seed);
+    for (int b = 0; b < B; ++b) {
+        Graph ng = configuration_null(g, rng);
+        BmTrace nt = bm_greedy_trace(ng, out.observed.z.size());
+        nullz.push_back(std::move(nt.z));
+    }
+    out.cut = out.observed.z.size();
+    for (size_t t = 0; t < out.observed.z.size(); ++t) {
+        int tail = 0;
+        for (const auto &z : nullz) {
+            double nz = t < z.size() ? z[t] : 0.0;
+            if (nz >= out.observed.z[t] - 1e-12) ++tail;
+        }
+        double p = (double)(tail + 1) / (double)(B + 1);
+        out.p_stage.push_back(p);
+        // This is a stagewise parametric-bootstrap test.  The first non-significant
+        // maximum is not merged, so the reported partition contains only evidence
+        // exceeding the chosen configuration-null level at every retained stage.
+        if (p > alpha) { out.cut = t; break; }
+    }
+    out.total_ms = ms_since(t0);
+    return out;
+}
+
+// --------------------------------------------------------------------------- //
+//  BM-CV: sample-split, familywise-calibrated Bader residual selection.
+//
+//  The literal path test above has no power at singleton scale: a selected edge
+//  is as surprising in a real graph as in a configuration graph.  BM-CV fixes
+//  that without pretending the selected edge is an ordinary z-test.  One edge
+//  split constructs a Bader dendrogram; the independent split evaluates every
+//  cut by the total within-module Bader residual
+//
+//      R(P) = sum_C [ l_CC - S_C^2/(4m) ].
+//
+//  A configuration bootstrap of the VALIDATION graph evaluates the same fixed
+//  discovery tree.  Its maximum standardized residual over every candidate cut
+//  is the null reference, so the reported `p_global` includes the cut search.
+//  This is a real statistical denomination: conditional on the discovery tree,
+//  it is a Monte-Carlo familywise p-value under the degree-preserving null.
+// --------------------------------------------------------------------------- //
+struct EdgeSplit { Graph discovery, validation; };
+
+EdgeSplit split_edges(const Dataset &d, double discovery_fraction, unsigned seed) {
+    std::mt19937 rng(seed);
+    std::bernoulli_distribution keep(discovery_fraction);
+    vector<std::pair<int, int>> a, b; a.reserve(d.edges.size()); b.reserve(d.edges.size());
+    for (auto e : d.edges) (keep(rng) ? a : b).push_back(e);
+    // Keep both sides nonempty on tiny graphs; this is deterministic given seed.
+    if (b.empty() && !a.empty()) { b.push_back(a.back()); a.pop_back(); }
+    if (a.empty() && !b.empty()) { a.push_back(b.back()); b.pop_back(); }
+    return {Graph::from_edges(d.n, a), Graph::from_edges(d.n, b)};
+}
+
+// Evaluate the discovery tree against another graph.  Each entry is the sum of
+// Bader's diagonal residuals after the corresponding number of discovery merges.
+vector<double> bm_within_residual_trace(const Graph &g,
+                                        const vector<std::pair<int, int>> &merges) {
+    vector<double> out;
+    if (g.m2 <= 0.0) { out.assign(merges.size(), 0.0); return out; }
+    int N = g.n();
+    vector<std::unordered_map<int, double>> nbr(N);
+    for (int u = 0; u < N; ++u)
+        for (auto &e : g.adj[u]) if (e.first != u) nbr[u][e.first] += e.second;
+    vector<double> sigma = g.degree;
+    double lin = 0.0, sumsq = 0.0;
+    for (double s : sigma) sumsq += s * s;
+    out.reserve(merges.size());
+    for (auto ab : merges) {
+        int a = ab.first, b = ab.second;
+        double wab = 0.0;
+        auto it = nbr[a].find(b); if (it != nbr[a].end()) wab = it->second;
+        lin += wab;
+        sumsq += 2.0 * sigma[a] * sigma[b];
+        nbr[a].erase(b);
+        for (auto &kv : nbr[b]) {
+            int x = kv.first;
+            if (x == a) continue;
+            nbr[a][x] += kv.second;
+            nbr[x].erase(b);
+            nbr[x][a] = nbr[a][x];
+        }
+        nbr[b].clear(); sigma[a] += sigma[b]; sigma[b] = 0.0;
+        out.push_back(lin - sumsq / (2.0 * g.m2));
+    }
+    return out;
+}
+
+struct BmCvResult {
+    BmTrace discovery_tree;
+    size_t cut = 0;
+    bool significant = false;
+    double z_best = 0.0;
+    double p_global = 1.0;
+    int bootstraps = 0;
+    double total_ms = 0.0;
+};
+
+BmCvResult bm_cv_calibrate(const Graph &validation, BmTrace tree, int B, double alpha,
+                            unsigned seed) {
+    auto t0 = Clock::now();
+    BmCvResult out; out.bootstraps = B; out.discovery_tree = std::move(tree);
+    const size_t T = out.discovery_tree.merges.size();
+    if (T == 0 || validation.m2 <= 0.0) { out.total_ms = ms_since(t0); return out; }
+
+    vector<double> obs = bm_within_residual_trace(validation, out.discovery_tree.merges);
+    vector<vector<double>> nul; nul.reserve(B);
+    std::mt19937 rng(seed ^ 0x9E3779B9u);
+    for (int b = 0; b < B; ++b)
+        nul.push_back(bm_within_residual_trace(configuration_null(validation, rng), out.discovery_tree.merges));
+
+    vector<double> mu(T, 0.0), sd(T, 0.0), zobs(T, -1e300);
+    for (size_t t = 0; t < T; ++t) {
+        for (int b = 0; b < B; ++b) mu[t] += nul[b][t];
+        mu[t] /= B;
+        for (int b = 0; b < B; ++b) sd[t] += (nul[b][t] - mu[t]) * (nul[b][t] - mu[t]);
+        sd[t] = std::sqrt(sd[t] / B);
+        if (sd[t] > 1e-12) zobs[t] = (obs[t] - mu[t]) / sd[t];
+    }
+    out.cut = (size_t)(std::max_element(zobs.begin(), zobs.end()) - zobs.begin()) + 1;
+    out.z_best = zobs[out.cut - 1];
+
+    int tail = 0;
+    for (int b = 0; b < B; ++b) {
+        double maxz = -1e300;
+        for (size_t t = 0; t < T; ++t)
+            if (sd[t] > 1e-12) maxz = std::max(maxz, (nul[b][t] - mu[t]) / sd[t]);
+        if (maxz >= out.z_best - 1e-12) ++tail;
+    }
+    out.p_global = (double)(tail + 1) / (double)(B + 1);
+    out.significant = out.p_global <= alpha;
+    if (!out.significant) out.cut = 0;
+    out.total_ms = ms_since(t0);
+    return out;
+}
+
+// Literal Bader ranking for discovery, followed by independent calibration.
+BmCvResult bm_cv_select(const Dataset &d, int B, double alpha, unsigned seed) {
+    EdgeSplit sp = split_edges(d, 0.60, seed);
+    return bm_cv_calibrate(sp.validation, bm_greedy_trace(sp.discovery), B, alpha, seed);
+}
+
+// The practical correction: CNM supplies a deterministic candidate dendrogram;
+// Bader residuals and the held-out configuration bootstrap decide WHICH cut is
+// statistically supported.  This avoids using a residual z-score as an unsafe
+// local merge ranking while preserving Bader's actual residual criterion.
+BmCvResult cnm_bm_cv_select(const Dataset &d, int B, double alpha, unsigned seed) {
+    EdgeSplit sp = split_edges(d, 0.60, seed);
+    CnmTrace cnm = cnm_greedy_trace(sp.discovery);
+    BmTrace tree; tree.n = d.n; tree.merges = std::move(cnm.merges);
+    return bm_cv_calibrate(sp.validation, std::move(tree), B, alpha, seed);
+}
+
 // Where the rolling rule cuts a recorded dQ trace (merge count to keep).
 size_t rollstop_cut(const CnmTrace &tr, int W, double kmult, bool two_sided,
                     RollStop *out = nullptr) {
@@ -976,8 +1290,6 @@ double g_tau(double tau) { return (std::sqrt(tau * tau + 4) - tau) / 2.0; }
 // --------------------------------------------------------------------------- //
 //  Dataset generators (synthetic; self-contained).
 // --------------------------------------------------------------------------- //
-struct Dataset { int n; vector<std::pair<int, int>> edges; vector<int> gt; };
-
 Dataset ring_of_cliques(int n, int c) {
     Dataset d; d.n = n * c; d.gt.assign(n * c, 0);
     vector<int> starts;
@@ -1797,6 +2109,84 @@ void experiment_11() {
     }
 }
 
+// --------------------------------------------------------------------------- //
+//  Experiment 12: BM-PATH, a calibrated Bader--McCloskey merge criterion.
+//
+//  This is deliberately opt-in (`--bm-path`).  A run uses B configuration-model
+//  paths for every graph, so the small/medium benchmark is the development
+//  target; it must earn a large-network run rather than silently charging one.
+// --------------------------------------------------------------------------- //
+void experiment_12(int argc, char **argv, int B, double alpha) {
+    std::cout << "\n=== Experiment 12: BM-PATH configuration-bootstrap residual test ===\n";
+    std::cout << "graph\tN\tM\tmethod\tB\talpha\tmerges\tK\tQ\tF1\tNMI\tlast_S\tp_next\tms\n";
+
+    auto run = [&](const std::string &name, const Dataset &d) {
+        Graph g = Graph::from_edges(d.n, d.edges);
+        bool labelled = std::any_of(d.gt.begin(), d.gt.end(), [](int x) { return x >= 0; });
+        auto print = [&](const std::string &method, const vector<int> &lab, size_t merges,
+                         double last_s, double pnext, double ms) {
+            std::cout << name << "\t" << d.n << "\t" << d.edges.size() << "\t" << method
+                      << "\t" << B << "\t" << alpha << "\t" << merges << "\t"
+                      << num_communities(lab) << "\t" << modularity(g, lab) << "\t";
+            if (labelled) std::cout << community_f1(lab, d.gt) << "\t" << nmi(lab, d.gt);
+            else std::cout << "NA\tNA";
+            std::cout << "\t" << last_s << "\t";
+            if (pnext < 0.0) std::cout << "NA"; else std::cout << pnext;
+            std::cout << "\t" << ms << "\n";
+        };
+
+        auto c0 = Clock::now();
+        CnmTrace cnm = cnm_greedy_trace(g);
+        print("CNM-full", cnm_labels_at(cnm, cnm.merges.size()), cnm.merges.size(), 0.0, -1.0,
+              ms_since(c0));
+
+        auto b0 = Clock::now();
+        BmTrace raw = bm_greedy_trace(g);
+        double raw_s = raw.z.empty() ? 0.0 : raw.z.back();
+        print("BM-residual-full", bm_labels_at(raw, raw.merges.size()), raw.merges.size(), raw_s,
+              -1.0, ms_since(b0));
+
+        BmBootstrapResult bm = bm_path_bootstrap(g, B, alpha, 0xBADC0DEu + (unsigned)d.n);
+        double accepted_s = bm.cut == 0 ? 0.0 : bm.observed.z[bm.cut - 1];
+        double pnext = bm.cut < bm.p_stage.size() ? bm.p_stage[bm.cut] : -1.0;
+        print("BM-PATH", bm_labels_at(bm.observed, bm.cut), bm.cut, accepted_s, pnext, bm.total_ms);
+
+        BmCvResult cv = bm_cv_select(d, B, alpha, 0xC0FFEEu + (unsigned)d.n);
+        if (cv.significant) {
+            print("BM-CV", bm_labels_at(cv.discovery_tree, cv.cut), cv.cut, cv.z_best,
+                  cv.p_global, cv.total_ms);
+        } else {
+            // `K=0` means "no statistically supported partition", not a graph
+            // labelling with zero nodes.  Avoid calling partition metrics for it.
+            std::cout << name << "\t" << d.n << "\t" << d.edges.size() << "\tBM-CV-none\t"
+                      << B << "\t" << alpha << "\t0\t0\tNA\tNA\tNA\t"
+                      << cv.z_best << "\t" << cv.p_global << "\t" << cv.total_ms << "\n";
+        }
+    };
+
+    // The resolution-limit instance and the degree-corrected hierarchical SBM
+    // have known planted labels.  ER has no planted partition: a calibrated
+    // method should retain zero statistically significant merges there.
+    run("ring40-c5", ring_of_cliques(40, 5));
+    vector<int> gt_super;
+    run("hierarchical-sbm", hierarchical_sbm(17, gt_super));
+    run("ER-250-d10", erdos_renyi(250, 10.0, 17));
+
+    // Optional prepared labelled data: e.g.
+    //   --bm-path karate=prepared/karate.edges:prepared/karate.labels
+    for (int i = 1; i < argc; ++i) {
+        std::string spec = argv[i];
+        if (spec.rfind("--", 0) == 0 || spec.rfind("large=", 0) == 0) continue;
+        auto eq = spec.find('=');
+        if (eq == std::string::npos) continue;
+        std::string name = spec.substr(0, eq), rest = spec.substr(eq + 1);
+        auto colon = rest.find(':');
+        Dataset d = load_edgelist(rest.substr(0, colon),
+                                  colon == std::string::npos ? "" : rest.substr(colon + 1));
+        if (d.n > 0) run(name, d);
+    }
+}
+
 int main(int argc, char **argv) {
     std::cout.setf(std::ios::fixed);
     std::cout.precision(3);
@@ -1807,7 +2197,9 @@ int main(int argc, char **argv) {
     bool only_large = false;
     // The rolling-stop experiments (9/10/11) are opt-in so the CNM agglomeration
     // is only paid for when asked. --only-roll runs 9 alone on the large specs.
-    bool only_roll = false, want_roll_small = false, want_roll_er = false;
+    bool only_roll = false, want_roll_small = false, want_roll_er = false, want_bm_path = false;
+    int bm_bootstraps = 99;
+    double bm_alpha = 0.05;
     // CNM heap ceiling in entries. Ent is 24 B, so 20M entries is about 480 MB.
     // Crossing it triggers stale-entry compaction (result-preserving); only a heap
     // still oversized when fully live aborts the run.
@@ -1823,6 +2215,15 @@ int main(int argc, char **argv) {
         if (a == "--only-roll") { only_roll = true; continue; }
         if (a == "--roll-small") { want_roll_small = true; continue; }
         if (a == "--roll-er") { want_roll_er = true; continue; }
+        if (a == "--bm-path") { want_bm_path = true; continue; }
+        if (a.rfind("--bm-bootstrap=", 0) == 0) {
+            bm_bootstraps = std::max(19, atoi(a.substr(15).c_str()));
+            continue;
+        }
+        if (a.rfind("--bm-alpha=", 0) == 0) {
+            bm_alpha = atof(a.substr(11).c_str());
+            continue;
+        }
         if (a.rfind("--max-pushes=", 0) == 0) {
             max_pushes = atoll(a.substr(13).c_str());
             continue;
@@ -1844,6 +2245,11 @@ int main(int argc, char **argv) {
         if (want_roll_er) experiment_11();
         if (want_roll_small) experiment_10(argc, argv);
         experiment_9(large, max_pushes, max_merges);
+        return 0;
+    }
+
+    if (want_bm_path) {
+        experiment_12(argc, argv, bm_bootstraps, bm_alpha);
         return 0;
     }
 
