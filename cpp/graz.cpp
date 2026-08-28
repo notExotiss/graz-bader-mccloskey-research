@@ -36,6 +36,11 @@
 //         ./graz --only-roll --roll-er --roll-small name=... large=...
 //                                                  (exps 9/10/11: the rolling-
 //                                                   window dQ stopping rule)
+//         ./graz --full-stop-report name=... large=...
+//                                                  (exp 13: T1--T5, BM-native,
+//                                                   CM baseline, and ER-calibrated h)
+//         ./graz --multicut-report name=... large=...
+//                                                  (exp 14: held-out/MDL/stability cuts)
 //
 // A SECOND statistical criterion is implemented alongside Eq. 6: a rolling-window
 // test on the sequence of accepted dQ values (CNM-style). Keep the last W dQ
@@ -51,6 +56,7 @@
 #include <deque>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <numeric>
@@ -533,6 +539,12 @@ struct CnmTrace {
     double build_ms = 0.0;
     bool complete = false;              // false if a guard aborted the run
     bool truncated = false;             // true if stopped early by a merge budget
+    // Diagnostics for stopping rules which operate on the *unchanged* CNM
+    // merge order.  Entry t describes the candidate accepted at merge t,
+    // immediately before that merge is applied.
+    vector<double> merge_z;             // Eq. 6, evaluated at community scale
+    vector<long long> candidate_pairs;  // adjacent live community pairs
+    size_t singleton_phase_end = 0;     // first cut after no mergeable singleton
 };
 
 // max_merges > 0 stops the agglomeration after that many merges. This is a
@@ -557,6 +569,7 @@ CnmTrace cnm_greedy_trace(const Graph &g, long long max_pushes = 0,
             if (e.first != u) nbr[u][e.first] += e.second;
 
     vector<double> Sigma = g.degree;
+    vector<int> csize(N, 1);
     vector<char> alive(N, 1);
     vector<unsigned> ver(N, 0);
 
@@ -622,6 +635,17 @@ CnmTrace cnm_greedy_trace(const Graph &g, long long max_pushes = 0,
             }
     std::make_heap(pq.begin(), pq.end());
 
+    // `singleton_mergeable` counts live singleton communities which still have
+    // a candidate neighbour.  It gives the CNM-axis analogue of GRAZ_MERGE's
+    // level-zero deferral without changing one heap comparison or one merge.
+    long long candidate_pairs = 0, singleton_mergeable = 0;
+    for (int u = 0; u < N; ++u) {
+        candidate_pairs += (long long)nbr[u].size();
+        if (!nbr[u].empty()) ++singleton_mergeable;
+    }
+    candidate_pairs /= 2;
+    if (singleton_mergeable == 0) tr.singleton_phase_end = 0;
+
     while (!pq.empty()) {
         Ent e = pq.front();
         std::pop_heap(pq.begin(), pq.end());
@@ -644,6 +668,13 @@ CnmTrace cnm_greedy_trace(const Graph &g, long long max_pushes = 0,
 
         tr.dq.push_back(dq_exact);
         tr.merges.push_back({a, b});
+        tr.merge_z.push_back(z_statistic(Sigma[e.i], w_ij, Sigma[e.j], m2));
+        tr.candidate_pairs.push_back(candidate_pairs);
+
+        if (csize[a] == 1 && !nbr[a].empty()) --singleton_mergeable;
+        if (csize[b] == 1 && !nbr[b].empty()) --singleton_mergeable;
+        const long long deg_a = (long long)nbr[a].size();
+        const long long deg_b = (long long)nbr[b].size();
 
         nbr[a].erase(b);
         for (auto &kv : nbr[b]) {
@@ -656,6 +687,7 @@ CnmTrace cnm_greedy_trace(const Graph &g, long long max_pushes = 0,
         nbr[b].clear();
         Sigma[a] += Sigma[b];
         Sigma[b] = 0.0;
+        csize[a] += csize[b]; csize[b] = 0;
         alive[b] = 0;
         ++ver[a]; ++ver[b];
 
@@ -667,6 +699,11 @@ CnmTrace cnm_greedy_trace(const Graph &g, long long max_pushes = 0,
             hpush({dqx, std::min(a, x), std::max(a, x),
                    ver[std::min(a, x)], ver[std::max(a, x)]});
         }
+        // Remove the two old incident neighbourhoods, restore their mutual
+        // edge once, then add the union of the new survivor's neighbours.
+        candidate_pairs += (long long)nbr[a].size() - deg_a - deg_b + 1;
+        if (singleton_mergeable == 0 && tr.singleton_phase_end == 0)
+            tr.singleton_phase_end = tr.merges.size();
         // Memory control. What costs RAM is the heap's LIVE size, so bound
         // pq.size(): first try compaction, which is free in result terms, and only
         // abort if the heap is still oversized with all-live entries.
@@ -1157,6 +1194,182 @@ size_t rollstop_cut_rel(const CnmTrace &tr, int W, double kmult, double min_rel,
 }
 
 // --------------------------------------------------------------------------- //
+// David-review fixes 1--3: a common, replay-only stopping-rule layer.
+//
+// The modifiers deliberately live outside `cnm_greedy_trace`: they never alter
+// the priority queue, candidate scores, or accepted merge list.  This makes it
+// possible to compare an unmodified and a modified rule on exactly the same
+// dendrogram.
+// --------------------------------------------------------------------------- //
+enum class Dispersion { SD, MAD };
+struct StopModifiers {
+    bool defer_singletons = false;
+    Dispersion dispersion = Dispersion::SD;
+    double epsilon = 1e-6;
+};
+
+double median_of(vector<double> x) {
+    if (x.empty()) return 0.0;
+    size_t k = x.size() / 2;
+    std::nth_element(x.begin(), x.begin() + k, x.end());
+    double hi = x[k];
+    if (x.size() & 1) return hi;
+    std::nth_element(x.begin(), x.begin() + k - 1, x.end());
+    return 0.5 * (hi + x[k - 1]);
+}
+
+double dispersion_of(const vector<double> &x, Dispersion which) {
+    if (x.empty()) return 0.0;
+    if (which == Dispersion::MAD) {
+        double med = median_of(x);
+        vector<double> dev; dev.reserve(x.size());
+        for (double v : x) dev.push_back(std::fabs(v - med));
+        return 1.4826 * median_of(std::move(dev));
+    }
+    double mu = std::accumulate(x.begin(), x.end(), 0.0) / x.size();
+    double ss = 0.0;
+    for (double v : x) ss += (v - mu) * (v - mu);
+    return std::sqrt(ss / x.size());
+}
+
+double mean_of(const vector<double> &x) {
+    return x.empty() ? 0.0 : std::accumulate(x.begin(), x.end(), 0.0) / x.size();
+}
+
+bool may_test_at(const CnmTrace &tr, size_t t, const StopModifiers &mod) {
+    return !mod.defer_singletons || t >= tr.singleton_phase_end;
+}
+
+// MAD is a robust replacement, not an invitation to divide by a near-zero
+// plateau.  The relative floor is intentionally enabled for MAD only: SD is
+// retained as the exact historical baseline, while `--dispersion=mad` is the
+// requested plateau-protected modifier.
+bool degenerate_window(const vector<double> &window, double scale,
+                       const StopModifiers &mod) {
+    if (scale <= 0.0) return true;
+    if (mod.dispersion != Dispersion::MAD) return false;
+    return scale / std::max(std::fabs(mean_of(window)), 1e-300) < mod.epsilon;
+}
+
+// `kind` is level (`raw` / `log`) or a first-difference test (`diff`).
+size_t rollstop_cut_mod(const CnmTrace &tr, int W, double kmult, bool two_sided,
+                        const std::string &kind, const StopModifiers &mod) {
+    vector<double> win;
+    size_t cut = tr.dq.size();
+    for (size_t t = 0; t < tr.dq.size(); ++t) {
+        double value = tr.dq[t];
+        if (kind == "log") {
+            if (value <= 0.0) { if (may_test_at(tr, t, mod)) { cut = t; break; } }
+            value = std::log(std::max(value, 1e-300));
+        }
+        if ((int)win.size() == W && may_test_at(tr, t, mod)) {
+            double scale = dispersion_of(win, mod.dispersion);
+            if (!degenerate_window(win, scale, mod)) {
+                double statistic = kind == "diff"
+                    ? (two_sided ? std::fabs(tr.dq[t - 1] - tr.dq[t])
+                                 : tr.dq[t - 1] - tr.dq[t])
+                    : (two_sided ? std::fabs(value - mean_of(win))
+                                 : mean_of(win) - value);
+                if (statistic > kmult * scale) { cut = t; break; }
+            }
+        }
+        win.push_back(value);
+        if ((int)win.size() > W) win.erase(win.begin());
+    }
+    return cut;
+}
+
+struct DetrendedPoint {
+    bool ready = false;
+    double residual = 0.0;
+    double scale = 0.0;
+    vector<double> log_window;
+    vector<double> residual_window;
+};
+
+// Fit y_i=a+b*i to the W observations immediately before t.  The residual
+// scale is calculated from the fitted residuals, never from the declining raw
+// dQ level.  This is the explicit Fix-1 distinction from rollstop_cut_log.
+DetrendedPoint detrended_log_point(const CnmTrace &tr, size_t t, int W,
+                                   Dispersion dispersion) {
+    DetrendedPoint out;
+    if (t < (size_t)W || t >= tr.dq.size() || tr.dq[t] <= 0.0) return out;
+    out.log_window.reserve(W);
+    for (size_t i = t - W; i < t; ++i) {
+        if (tr.dq[i] <= 0.0) return out;
+        out.log_window.push_back(std::log(tr.dq[i]));
+    }
+    const double xbar = 0.5 * (W - 1), ybar = mean_of(out.log_window);
+    double sxx = 0.0, sxy = 0.0;
+    for (int i = 0; i < W; ++i) {
+        double dx = i - xbar;
+        sxx += dx * dx; sxy += dx * (out.log_window[i] - ybar);
+    }
+    double b = sxx > 0.0 ? sxy / sxx : 0.0;
+    double a = ybar - b * xbar;
+    out.residual_window.reserve(W);
+    for (int i = 0; i < W; ++i)
+        out.residual_window.push_back(out.log_window[i] - (a + b * i));
+    out.residual = std::log(tr.dq[t]) - (a + b * W);
+    out.scale = dispersion_of(out.residual_window, dispersion);
+    out.ready = true;
+    return out;
+}
+
+size_t rollstop_cut_detrend(const CnmTrace &tr, int W, double kmult, bool two_sided,
+                            const StopModifiers &mod) {
+    for (size_t t = 0; t < tr.dq.size(); ++t) {
+        if (!may_test_at(tr, t, mod)) continue;
+        DetrendedPoint p = detrended_log_point(tr, t, W, mod.dispersion);
+        if (!p.ready || degenerate_window(p.log_window, p.scale, mod)) continue;
+        double v = two_sided ? std::fabs(p.residual) : -p.residual;
+        if (v > kmult * p.scale) return t;
+    }
+    return tr.dq.size();
+}
+
+// Fix 2.  Work in residual-standard-deviation units; otherwise delta=1 would
+// depend on the arbitrary log-dQ scale.  `h` is therefore the single,
+// calibratable control parameter for both procedures.
+size_t rollstop_cut_cusum(const CnmTrace &tr, int W, double h, double delta,
+                          const StopModifiers &mod, bool shiryaev_roberts) {
+    double stat = 0.0;
+    for (size_t t = 0; t < tr.dq.size(); ++t) {
+        if (!may_test_at(tr, t, mod)) continue;
+        DetrendedPoint p = detrended_log_point(tr, t, W, mod.dispersion);
+        if (!p.ready || degenerate_window(p.log_window, p.scale, mod)) continue;
+        double x = p.residual / p.scale;
+        if (shiryaev_roberts) {
+            double lr = std::exp(std::min(700.0, -delta * x - 0.5 * delta * delta));
+            stat = std::min(1e300, (1.0 + stat) * lr);
+        } else {
+            stat = std::max(0.0, stat + (-x) - delta / 2.0);
+        }
+        if (stat > h) return t;
+    }
+    return tr.dq.size();
+}
+
+// Fix 4.  These values were recorded from the exact candidate CNM selected;
+// adaptive_tau is recomputed with the current number of adjacent pairs.
+size_t bm_native_stop_cut(const CnmTrace &tr, double tau) {
+    for (size_t t = 0; t < tr.merge_z.size(); ++t) {
+        double m = std::max(3LL, tr.candidate_pairs[t]);
+        double tau_eff = tau * std::sqrt(2.0 * std::log(m));
+        if (tr.merge_z[t] <= tau_eff) return t;
+    }
+    return tr.merges.size();
+}
+
+size_t cm_baseline_cut(const CnmTrace &tr, double m2, double c) {
+    if (m2 <= 0.0) return tr.merges.size();
+    double threshold = 2.0 * c / m2; // c / m, where m=m2/2.
+    for (size_t t = 0; t < tr.dq.size(); ++t)
+        if (tr.dq[t] < threshold) return t;
+    return tr.merges.size();
+}
+
+// --------------------------------------------------------------------------- //
 //  Why the rule fires where it does: dump the head of the dQ trace and the window
 //  statistics at the firing point. This is the diagnostic that shows the failure
 //  mode is a property of the dQ SEQUENCE, not of the implementation.
@@ -1228,6 +1441,14 @@ vector<int> community_sizes(const vector<int> &c) {
     return s;
 }
 
+double frac_nonsingleton(const vector<int> &c) {
+    std::unordered_map<int, int> cnt;
+    for (int x : c) ++cnt[x];
+    long long kept = 0;
+    for (int x : c) if (cnt[x] >= 2) ++kept;
+    return c.empty() ? 0.0 : (double)kept / c.size();
+}
+
 // NMI over the subset of nodes present in ground truth (gt[u] < 0 = absent)
 double nmi(const vector<int> &pred, const vector<int> &gt) {
     vector<int> a, b;
@@ -1252,36 +1473,34 @@ double nmi(const vector<int> &pred, const vector<int> &gt) {
 
 // best-match averaged F1 (symmetric), over nodes present in ground truth
 double community_f1(const vector<int> &pred, const vector<int> &gt) {
-    std::unordered_map<int, std::unordered_set<int>> P, T;
-    int idx = 0;
     vector<int> a, b;
     for (size_t u = 0; u < gt.size(); ++u)
         if (gt[u] >= 0) { a.push_back(pred[u]); b.push_back(gt[u]); }
     if (a.empty()) return 0.0;
-    for (size_t i = 0; i < a.size(); ++i) { P[a[i]].insert((int)i); T[b[i]].insert((int)i); }
-    auto best = [](std::unordered_map<int, std::unordered_set<int>> &A,
-                   std::unordered_map<int, std::unordered_set<int>> &B) {
-        double total = 0.0;
-        for (auto &pa : A) {
-            double bf = 0.0;
-            for (auto &pb : B) {
-                int inter = 0;
-                const auto &sa = pa.second; const auto &sb = pb.second;
-                const auto &small = sa.size() < sb.size() ? sa : sb;
-                const auto &big = sa.size() < sb.size() ? sb : sa;
-                for (int x : small) if (big.count(x)) inter++;
-                if (!inter) continue;
-                double prec = (double)inter / sa.size();
-                double rec = (double)inter / sb.size();
-                double f1 = 2 * prec * rec / (prec + rec);
-                if (f1 > bf) bf = f1;
-            }
-            total += bf;
-        }
-        return A.empty() ? 0.0 : total / A.size();
-    };
-    return 0.5 * (best(P, T) + best(T, P));
-    (void)idx;
+    // Build only the sparse contingency table.  The previous implementation
+    // materialized node sets and compared every predicted community to every
+    // truth community, which is quadratic for the singleton-heavy early CNM
+    // cuts (and made DBLP metric generation look like a hang).
+    std::unordered_map<int, long long> np, nt;
+    std::unordered_map<unsigned long long, long long> nij;
+    for (size_t i = 0; i < a.size(); ++i) {
+        ++np[a[i]]; ++nt[b[i]];
+        unsigned long long key = (static_cast<unsigned long long>(static_cast<unsigned>(a[i])) << 32) |
+                                 static_cast<unsigned>(b[i]);
+        ++nij[key];
+    }
+    double pred_total = 0.0, truth_total = 0.0;
+    std::unordered_map<int, double> best_pred, best_truth;
+    for (auto &kv : nij) {
+        int p = (int)(kv.first >> 32), t = (int)(kv.first & 0xffffffffu);
+        double inter = kv.second;
+        double f = 2.0 * inter / (np[p] + nt[t]);
+        best_pred[p] = std::max(best_pred[p], f);
+        best_truth[t] = std::max(best_truth[t], f);
+    }
+    for (auto &kv : np) pred_total += best_pred[kv.first];
+    for (auto &kv : nt) truth_total += best_truth[kv.first];
+    return 0.5 * (pred_total / np.size() + truth_total / nt.size());
 }
 
 double phi(double x) { return 0.5 * (1 + std::erf(x / std::sqrt(2.0))); }
@@ -2110,6 +2329,344 @@ void experiment_11() {
 }
 
 // --------------------------------------------------------------------------- //
+// Experiment 13: David-review full stopping-rule report.
+//
+// This is intentionally a tab-separated, rectangular report so it can be
+// redirected into a raw .tsv and converted verbatim to the plain Markdown
+// tables in RESULTS.md.  A run pays for one CNM trace per graph; every rule is
+// then a replay of that immutable trace.
+// --------------------------------------------------------------------------- //
+struct StopRuleSpec {
+    std::string method, modifier;
+    int W = 0;
+    double parameter = 0.0;       // k for T1--T4, h for T5, c for CM
+    bool two_sided = false;
+    int type = 0;                 // 0 raw, 1 diff, 2 detrend, 3 cusum, 4 SR, 5 BM, 6 CM
+    StopModifiers mod;
+};
+
+vector<StopRuleSpec> full_rule_specs(double h) {
+    vector<StopRuleSpec> out;
+    const std::vector<std::pair<std::string, StopModifiers>> modifiers = {
+        {"none", {}},
+        {"defer", {true, Dispersion::SD, 1e-6}},
+        {"mad", {false, Dispersion::MAD, 1e-6}},
+        {"defer+mad", {true, Dispersion::MAD, 1e-6}}
+    };
+    // Carried-over best representatives.  The exhaustive legacy grids remain
+    // available in experiments 9--11; this focused comparison avoids making a
+    // 100-row ER table turn into an unreadable 1,000-row tuning table.
+    for (const auto &mm : modifiers) {
+        out.push_back({"T1-2sided-k1", mm.first, 10, 1.0, true, 0, mm.second});
+        out.push_back({"T2-short-1sided", mm.first, 5, 5.0, false, 0, mm.second});
+        out.push_back({"T3-diff-1sided", mm.first, 15, 3.0, false, 1, mm.second});
+        for (int W : {10, 15, 20}) for (double k : {1.0, 2.0, 3.0}) {
+            out.push_back({"T4-detrend-1sided", mm.first, W, k, false, 2, mm.second});
+            out.push_back({"T4-detrend-2sided", mm.first, W, k, true, 2, mm.second});
+        }
+        out.push_back({"T5-cusum", mm.first, 15, h, false, 3, mm.second});
+        out.push_back({"T5-sr", mm.first, 15, h, false, 4, mm.second});
+    }
+    out.push_back({"BM-native-stop", "-", 0, 2.0, false, 5, {}});
+    for (double c : {1.0, 5.0, 10.0, 50.0})
+        out.push_back({"cm-baseline", "-", 0, c, false, 6, {}});
+    return out;
+}
+
+size_t apply_stop_rule(const CnmTrace &tr, double m2, const StopRuleSpec &s) {
+    switch (s.type) {
+    case 0: return rollstop_cut_mod(tr, s.W, s.parameter, s.two_sided, "raw", s.mod);
+    case 1: return rollstop_cut_mod(tr, s.W, s.parameter, s.two_sided, "diff", s.mod);
+    case 2: return rollstop_cut_detrend(tr, s.W, s.parameter, s.two_sided, s.mod);
+    case 3: return rollstop_cut_cusum(tr, s.W, s.parameter, 1.0, s.mod, false);
+    case 4: return rollstop_cut_cusum(tr, s.W, s.parameter, 1.0, s.mod, true);
+    case 5: return bm_native_stop_cut(tr, s.parameter);
+    case 6: return cm_baseline_cut(tr, m2, s.parameter);
+    }
+    return tr.merges.size();
+}
+
+struct RuleAggregate {
+    double k_all = 0, k_ge3 = 0, q = 0, f1 = 0, nmi_v = 0, nonsingle = 0;
+    double stop = 0, total = 0, edges = 0;
+    int n = 0;
+};
+
+void add_rule_metrics(RuleAggregate &a, const Graph &g, const Dataset &d,
+                      const CnmTrace &tr, size_t cut) {
+    vector<int> lab = cnm_labels_at(tr, cut);
+    int k3 = 0;
+    for (int s : community_sizes(lab)) if (s >= 3) ++k3;
+    a.k_all += num_communities(lab); a.k_ge3 += k3;
+    a.q += modularity(g, lab); a.f1 += community_f1(lab, d.gt); a.nmi_v += nmi(lab, d.gt);
+    a.nonsingle += frac_nonsingleton(lab); a.stop += cut;
+    a.total += tr.merges.size(); a.edges += d.edges.size(); ++a.n;
+}
+
+double calibrate_cusum_h(const vector<CnmTrace> &traces) {
+    // An empirical in-control calibration: select the smallest predeclared h
+    // with mean ARL >= 90% of the actual available CNM trace length.  No graph
+    // may choose a bespoke threshold after looking at its ground truth.
+    for (double h : {2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0}) {
+        double arl = 0.0, total = 0.0;
+        for (const CnmTrace &tr : traces) {
+            StopModifiers plain;
+            arl += rollstop_cut_cusum(tr, 15, h, 1.0, plain, false);
+            total += tr.merges.size();
+        }
+        if (total > 0.0 && arl / total >= 0.90) return h;
+    }
+    return 200.0;
+}
+
+void print_rule_aggregate_row(const std::string &dataset, const StopRuleSpec &s,
+                              const RuleAggregate &a, bool labelled) {
+    double d = std::max(1, a.n);
+    std::cout << dataset << "\t" << s.method << "\t" << s.modifier << "\t" << s.W << "\t"
+              << s.parameter << "\t" << (s.two_sided ? "2" : "1") << "\t"
+              << a.stop / d << "\t" << a.total / d << "\t"
+              << (a.total > 0 ? a.stop / a.total : 0.0) << "\t"
+              << a.k_all / d << "\t" << a.k_ge3 / d << "\t" << a.q / d << "\t";
+    if (labelled) std::cout << a.f1 / d << "\t" << a.nmi_v / d;
+    else std::cout << "NA\tNA";
+    std::cout << "\t" << a.nonsingle / d << "\n";
+}
+
+void experiment_13(int argc, char **argv, const vector<std::string> &large_specs,
+                   long long max_pushes, long long max_merges, int n_seeds) {
+    std::cout << "\n=== Experiment 13: full David-review stopping-rule comparison ===\n";
+    std::cout << "# T4 fits OLS to the preceding log-dQ window and compares the current "
+                 "trend-extrapolation residual with the fitted-residual scale. T5 applies "
+                 "CUSUM/SR to the same standardized residual stream; h is calibrated once "
+                 "on ER nulls, rather than swept per real graph.\n";
+    std::cout << "# `mad` uses 1.4826*MAD and suppresses a near-flat window when its "
+                 "relative scale is below 1e-6; `defer` begins testing only after no "
+                 "mergeable singleton community remains. BM-native-stop is separate: it "
+                 "tests Eq. 6 on CNM's selected community pair with adaptive tau.\n";
+    std::cout << "dataset\tmethod\tmodifier\tW\tparameter\tsided\tstop_at\tof_merges\t"
+                 "stop_frac\tK_all\tK_ge3\tQ\tF1\tNMI\tfrac_nonsingleton\n";
+
+    // First pass creates exactly the requested 10-seed ER calibration corpus.
+    struct ErCase { int N; Dataset d; CnmTrace tr; };
+    vector<ErCase> er;
+    vector<CnmTrace> null_traces;
+    for (int N : {1000, 2000, 5000, 10000}) for (int seed = 0; seed < n_seeds; ++seed) {
+        Dataset d = erdos_renyi(N, 10.0, seed);
+        Graph g = Graph::from_edges(d.n, d.edges);
+        CnmTrace tr = cnm_greedy_trace(g, max_pushes);
+        if (!tr.complete) { std::cerr << "ER trace aborted; omitting N=" << N << " seed=" << seed << "\n"; continue; }
+        null_traces.push_back(tr);
+        er.push_back({N, std::move(d), std::move(tr)});
+    }
+    double h = calibrate_cusum_h(null_traces);
+    std::cout << "# CUSUM calibration (delta=1, W=15): selected h=" << h
+              << " by the >=90% mean-ARL rule.\n";
+    for (double candidate_h : {2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0}) {
+        double arl = 0.0, total = 0.0;
+        for (const CnmTrace &tr : null_traces) {
+            arl += rollstop_cut_cusum(tr, 15, candidate_h, 1.0, {}, false);
+            total += tr.merges.size();
+        }
+        std::cout << "CALIBRATION\tT5-cusum\t-\t15\t" << candidate_h << "\t1\t"
+                  << (null_traces.empty() ? 0.0 : arl / null_traces.size()) << "\t"
+                  << (null_traces.empty() ? 0.0 : total / null_traces.size()) << "\t"
+                  << (total > 0 ? arl / total : 0.0) << "\tNA\tNA\tNA\tNA\tNA\tNA\n";
+    }
+    vector<StopRuleSpec> specs = full_rule_specs(h);
+    for (int N : {1000, 2000, 5000, 10000}) {
+        std::map<std::string, RuleAggregate> acc;
+        for (const ErCase &c : er) if (c.N == N) {
+            Graph g = Graph::from_edges(c.d.n, c.d.edges);
+            for (const StopRuleSpec &s : specs) {
+                size_t cut = apply_stop_rule(c.tr, g.m2, s);
+                add_rule_metrics(acc[s.method + "|" + s.modifier + "|" + std::to_string(s.W) + "|" +
+                                     std::to_string(s.parameter) + "|" + std::to_string(s.two_sided)],
+                                 g, c.d, c.tr, cut);
+            }
+        }
+        for (const StopRuleSpec &s : specs) {
+            std::string key = s.method + "|" + s.modifier + "|" + std::to_string(s.W) + "|" +
+                              std::to_string(s.parameter) + "|" + std::to_string(s.two_sided);
+            print_rule_aggregate_row("ER-" + std::to_string(N), s, acc[key], false);
+        }
+    }
+
+    auto run_real = [&](const std::string &name, const Dataset &d, long long budget) {
+        Graph g = Graph::from_edges(d.n, d.edges);
+        CnmTrace tr = cnm_greedy_trace(g, max_pushes, budget);
+        if (!tr.complete) { std::cout << "# " << name << " CNM trace aborted by memory guard.\n"; return; }
+        std::cout << "# " << name << " CNM-" << (tr.truncated ? "prefix" : "full")
+                  << " merges=" << tr.merges.size() << " budget=" << budget
+                  << " singleton_phase_end=" << tr.singleton_phase_end << "\n";
+        if ((name.find("amazon") != std::string::npos || name.find("dblp") != std::string::npos) &&
+            tr.dq.size() >= 2458) {
+            bool identical = true;
+            for (size_t t = 2438; t < 2458; ++t) if (tr.dq[t] != tr.dq[t + 1]) identical = false;
+            std::cout << "# plateau-window " << name << " indices=2438..2458 bit_identical_consecutive="
+                      << (identical ? "yes" : "no") << "\n";
+            std::streamsize old_precision = std::cout.precision();
+            std::ios::fmtflags old_flags = std::cout.flags();
+            std::cout << std::scientific << std::setprecision(17);
+            for (size_t t = 2438; t <= 2458; ++t)
+                std::cout << "TRACE\t" << name << "\t" << t << "\t" << tr.dq[t] << "\n";
+            std::cout.flags(old_flags); std::cout.precision(old_precision);
+        }
+        StopRuleSpec ref{tr.truncated ? "CNM-prefix" : "CNM-full", "-", 0, 0, false, 6, {}};
+        RuleAggregate ra; add_rule_metrics(ra, g, d, tr, tr.merges.size());
+        print_rule_aggregate_row(name, ref, ra,
+            std::any_of(d.gt.begin(), d.gt.end(), [](int x) { return x >= 0; }));
+        for (const StopRuleSpec &s : specs) {
+            RuleAggregate a; add_rule_metrics(a, g, d, tr, apply_stop_rule(tr, g.m2, s));
+            print_rule_aggregate_row(name, s, a,
+                std::any_of(d.gt.begin(), d.gt.end(), [](int x) { return x >= 0; }));
+        }
+    };
+    // Small graph specs use the existing name=edges:labels convention.
+    for (int i = 1; i < argc; ++i) {
+        std::string spec = argv[i];
+        if (spec.rfind("--", 0) == 0 || spec.rfind("large=", 0) == 0) continue;
+        auto eq = spec.find('='); if (eq == std::string::npos) continue;
+        auto colon = spec.find(':', eq + 1);
+        Dataset d = load_edgelist(spec.substr(eq + 1, colon == std::string::npos ? std::string::npos : colon - eq - 1),
+                                  colon == std::string::npos ? "" : spec.substr(colon + 1));
+        if (d.n) run_real(spec.substr(0, eq), d, 0);
+    }
+    for (const std::string &spec : large_specs) {
+        auto eq = spec.find('='); if (eq == std::string::npos) continue;
+        auto colon = spec.find(':', eq + 1);
+        Dataset d = load_edgelist(spec.substr(eq + 1, colon == std::string::npos ? std::string::npos : colon - eq - 1),
+                                  colon == std::string::npos ? "" : spec.substr(colon + 1));
+        if (d.n) run_real(spec.substr(0, eq), d, max_merges);
+    }
+}
+
+// --------------------------------------------------------------------------- //
+// Fix 5: post-hoc multi-cut selection.  Candidate cuts are every ceil(T/50)-th
+// merge plus the terminal cut, so at most 51 partitions are evaluated.  This
+// downsampling is stated in the report rather than hiding a search budget.
+// --------------------------------------------------------------------------- //
+using BlockKey = unsigned long long;
+BlockKey block_key(int a, int b) {
+    if (a > b) std::swap(a, b);
+    return (static_cast<BlockKey>(static_cast<unsigned>(a)) << 32) |
+           static_cast<unsigned>(b);
+}
+
+double entropy_bits(double p) {
+    if (p <= 0.0 || p >= 1.0) return 0.0;
+    return -p * std::log2(p) - (1.0 - p) * std::log2(1.0 - p);
+}
+
+struct BlockScores { double heldout_ll = -1e300, mdl = 1e300; };
+
+BlockScores score_partition_blocks(const Dataset &train, const Dataset &test,
+                                  const vector<int> &lab) {
+    BlockScores out;
+    std::unordered_map<int, long long> sizes;
+    for (int x : lab) ++sizes[x];
+    std::unordered_map<BlockKey, long long> etrain, etest;
+    for (auto e : train.edges) ++etrain[block_key(lab[e.first], lab[e.second])];
+    for (auto e : test.edges) ++etest[block_key(lab[e.first], lab[e.second])];
+    std::unordered_set<BlockKey> keys;
+    for (auto &x : etrain) keys.insert(x.first);
+    for (auto &x : etest) keys.insert(x.first);
+    // Include empty blocks implicitly only in MDL through their zero entropy.
+    double graph_bits = 0.0;
+    for (BlockKey key : keys) {
+        int a = (int)(key >> 32), b = (int)(key & 0xffffffffu);
+        double possible = a == b ? 0.5 * sizes[a] * (sizes[a] - 1.0)
+                                 : (double)sizes[a] * sizes[b];
+        if (possible <= 0.0) continue;
+        // Jeffreys smoothing makes held-out likelihood finite for unseen blocks.
+        double p = (etrain[key] + 0.5) / (possible + 1.0);
+        double held_nonedges = std::max(0.0, possible - etrain[key] - etest[key]);
+        out.heldout_ll += etest[key] * std::log(p) + held_nonedges * std::log(1.0 - p);
+        double pall = (etrain[key] + etest[key] + 0.5) / (possible + 1.0);
+        graph_bits += possible * entropy_bits(pall);
+    }
+    double assignment_bits = 0.0, n = lab.size();
+    for (auto &kv : sizes) {
+        double p = kv.second / n;
+        assignment_bits -= kv.second * std::log2(p);
+    }
+    out.mdl = assignment_bits + graph_bits;
+    return out;
+}
+
+void experiment_14_multicut(int argc, char **argv, const vector<std::string> &large_specs,
+                            long long max_pushes, int stability_reps) {
+    std::cout << "\n=== Experiment 14: multicut-report ===\n";
+    std::cout << "# Candidate cuts: every ceil(T/50)-th CNM merge plus T (at most 51). "
+                 "Held-out likelihood uses a fixed 90/10 edge split with Jeffreys-smoothed "
+                 "block probabilities; MDL is assignment entropy plus block Bernoulli code length.\n";
+    std::cout << "graph\tcandidates\tlikelihood_cut\tmdl_cut\tstability_cut\t"
+                 "CNM_argmaxQ_cut\tBM_native_cut\tstability_reps\n";
+    auto run = [&](const std::string &name, const Dataset &d) {
+        EdgeSplit split = split_edges(d, 0.90, 0x51EC7u);
+        CnmTrace tr = cnm_greedy_trace(split.discovery, max_pushes);
+        if (!tr.complete) { std::cout << name << "\tABORTED\n"; return; }
+        size_t stride = std::max<size_t>(1, (tr.merges.size() + 49) / 50);
+        vector<size_t> cuts;
+        for (size_t c = 0; c < tr.merges.size(); c += stride) cuts.push_back(c);
+        if (cuts.empty() || cuts.back() != tr.merges.size()) cuts.push_back(tr.merges.size());
+        vector<vector<int>> labs; labs.reserve(cuts.size());
+        vector<BlockScores> scores(cuts.size());
+        for (size_t cut : cuts) {
+            labs.push_back(cnm_labels_at(tr, cut));
+        }
+        // score_partition_blocks consumes edge lists; reconstruct them from the
+        // split graphs once, preserving weights as unweighted input edges.
+        Dataset train{d.n, {}, {}}, test{d.n, {}, {}};
+        for (int u = 0; u < split.discovery.n(); ++u)
+            for (auto e : split.discovery.adj[u]) if (u < e.first)
+                train.edges.push_back({u, e.first});
+        for (int u = 0; u < split.validation.n(); ++u)
+            for (auto e : split.validation.adj[u]) if (u < e.first)
+                test.edges.push_back({u, e.first});
+        for (size_t i = 0; i < cuts.size(); ++i) scores[i] = score_partition_blocks(train, test, labs[i]);
+        size_t best_ll = 0, best_mdl = 0;
+        for (size_t i = 1; i < cuts.size(); ++i) {
+            if (scores[i].heldout_ll > scores[best_ll].heldout_ll) best_ll = i;
+            if (scores[i].mdl < scores[best_mdl].mdl) best_mdl = i;
+        }
+        vector<double> stability(cuts.size(), 0.0);
+        std::mt19937 rng(0x57AB1Eu);
+        for (int rep = 0; rep < stability_reps; ++rep) {
+            std::bernoulli_distribution keep(0.95);
+            Dataset sub{d.n, {}, d.gt};
+            for (auto e : d.edges) if (keep(rng)) sub.edges.push_back(e);
+            CnmTrace st = cnm_greedy_trace(Graph::from_edges(sub.n, sub.edges), max_pushes);
+            if (!st.complete) continue;
+            for (size_t i = 0; i < cuts.size(); ++i)
+                stability[i] += nmi(labs[i], cnm_labels_at(st, std::min(cuts[i], st.merges.size())));
+        }
+        size_t best_stability = 0;
+        for (size_t i = 1; i < cuts.size(); ++i)
+            if (stability[i] > stability[best_stability]) best_stability = i;
+        std::cout << name << "\t" << cuts.size() << "\t" << cuts[best_ll] << "\t"
+                  << cuts[best_mdl] << "\t" << cuts[best_stability] << "\t"
+                  << tr.merges.size() << "\t" << bm_native_stop_cut(tr, 2.0) << "\t"
+                  << stability_reps << "\n";
+    };
+    for (int i = 1; i < argc; ++i) {
+        std::string spec = argv[i];
+        if (spec.rfind("--", 0) == 0 || spec.rfind("large=", 0) == 0) continue;
+        auto eq = spec.find('='); if (eq == std::string::npos) continue;
+        auto colon = spec.find(':', eq + 1);
+        Dataset d = load_edgelist(spec.substr(eq + 1, colon == std::string::npos ? std::string::npos : colon - eq - 1),
+                                  colon == std::string::npos ? "" : spec.substr(colon + 1));
+        if (d.n) run(spec.substr(0, eq), d);
+    }
+    for (const std::string &spec : large_specs) {
+        auto eq = spec.find('='); if (eq == std::string::npos) continue;
+        auto colon = spec.find(':', eq + 1);
+        Dataset d = load_edgelist(spec.substr(eq + 1, colon == std::string::npos ? std::string::npos : colon - eq - 1),
+                                  colon == std::string::npos ? "" : spec.substr(colon + 1));
+        if (d.n) run(spec.substr(0, eq), d);
+    }
+}
+
+// --------------------------------------------------------------------------- //
 //  Experiment 12: BM-PATH, a calibrated Bader--McCloskey merge criterion.
 //
 //  This is deliberately opt-in (`--bm-path`).  A run uses B configuration-model
@@ -2198,6 +2755,10 @@ int main(int argc, char **argv) {
     // The rolling-stop experiments (9/10/11) are opt-in so the CNM agglomeration
     // is only paid for when asked. --only-roll runs 9 alone on the large specs.
     bool only_roll = false, want_roll_small = false, want_roll_er = false, want_bm_path = false;
+    bool want_full_stop_report = false;
+    bool want_multicut_report = false;
+    int report_seeds = 10;  // David-review ER calibration requirement
+    int stability_reps = 20;
     int bm_bootstraps = 99;
     double bm_alpha = 0.05;
     // CNM heap ceiling in entries. Ent is 24 B, so 20M entries is about 480 MB.
@@ -2216,6 +2777,16 @@ int main(int argc, char **argv) {
         if (a == "--roll-small") { want_roll_small = true; continue; }
         if (a == "--roll-er") { want_roll_er = true; continue; }
         if (a == "--bm-path") { want_bm_path = true; continue; }
+        if (a == "--full-stop-report") { want_full_stop_report = true; continue; }
+        if (a == "--multicut-report") { want_multicut_report = true; continue; }
+        if (a.rfind("--report-seeds=", 0) == 0) {
+            report_seeds = std::max(1, atoi(a.substr(15).c_str()));
+            continue;
+        }
+        if (a.rfind("--stability-reps=", 0) == 0) {
+            stability_reps = std::max(1, atoi(a.substr(17).c_str()));
+            continue;
+        }
         if (a.rfind("--bm-bootstrap=", 0) == 0) {
             bm_bootstraps = std::max(19, atoi(a.substr(15).c_str()));
             continue;
@@ -2250,6 +2821,16 @@ int main(int argc, char **argv) {
 
     if (want_bm_path) {
         experiment_12(argc, argv, bm_bootstraps, bm_alpha);
+        return 0;
+    }
+
+    if (want_full_stop_report) {
+        experiment_13(argc, argv, large, max_pushes, max_merges, report_seeds);
+        return 0;
+    }
+
+    if (want_multicut_report) {
+        experiment_14_multicut(argc, argv, large, max_pushes, stability_reps);
         return 0;
     }
 
