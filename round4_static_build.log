@@ -1,0 +1,2 @@
+ld: library 'crt0.o' not found
+clang++: error: linker command failed with exit code 1 (use -v to see invocation)

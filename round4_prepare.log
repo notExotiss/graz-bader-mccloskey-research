@@ -1,0 +1,13 @@
+lfr_n1000_mu1: N=1000 M=11525 K=19
+lfr_n1000_mu3: N=1000 M=11484 K=17
+lfr_n1000_mu5: N=1000 M=11890 K=14
+lfr_n1000_mu7: N=1000 M=12386 K=14
+lfr_n5000_mu1: N=5000 M=58446 K=49
+lfr_n5000_mu3: N=5000 M=59843 K=44
+lfr_n5000_mu5: N=5000 M=60193 K=55
+lfr_n5000_mu7: N=5000 M=61210 K=60
+cora: N=2708 M=5278 K=7
+citeseer: Planetoid zero-row padding applied to 15 isolated nodes
+citeseer: N=3327 M=4552 K=6
+pubmed: N=19717 M=44324 K=3
+ego_facebook: N=4039 M=88234 K=1296

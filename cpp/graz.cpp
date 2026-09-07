@@ -52,6 +52,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <deque>
 #include <fstream>
@@ -203,6 +204,14 @@ struct Graph {
         }
         for (int u = 0; u < n_nodes; ++u)
             for (auto &kv : tmp[u]) g.adj[u].push_back({kv.first, kv.second});
+        // Do not let unordered_map bucket order leak into CNM's initial
+        // candidate insertion order.  Equal-dQ merges are common in the
+        // singleton phase, so a stable adjacency order is part of the
+        // algorithm's reproducibility contract.
+        for (auto &a : g.adj)
+            std::sort(a.begin(), a.end(), [](const auto &x, const auto &y) {
+                return x.first < y.first;
+            });
         g.size.assign(n_nodes, 1);
         g.finalize();
         return g;
@@ -585,7 +594,16 @@ CnmTrace cnm_greedy_trace(const Graph &g, long long max_pushes = 0,
     // instead, which cannot change the result at all.
     struct Ent {
         double dq; int i, j; unsigned vi, vj;
-        bool operator<(const Ent &o) const { return dq < o.dq; }  // max-heap
+        bool operator<(const Ent &o) const {
+            // std::heap takes the largest element.  On an exact dQ tie, retain
+            // the lexicographically smallest live pair.  Without this clause,
+            // heap order depends on unordered_map iteration/insertion order.
+            if (dq != o.dq) return dq < o.dq;
+            if (i != o.i) return i > o.i;
+            if (j != o.j) return j > o.j;
+            if (vi != o.vi) return vi > o.vi;
+            return vj > o.vj;
+        }
     };
     auto dq_of = [&](int i, int j, double w) {
         return 2.0 * (w / m2 - (Sigma[i] / m2) * (Sigma[j] / m2));
@@ -771,6 +789,127 @@ vector<int> cnm_labels_at(const CnmTrace &tr, size_t cut) {
         else out[u] = it->second;
     }
     return out;
+}
+
+// --------------------------------------------------------------------------- //
+// Input and trace reproducibility diagnostics (round 4).
+// --------------------------------------------------------------------------- //
+// The loader lives with the other dataset helpers below; declare it here so the
+// reproducibility mode can stay adjacent to the CNM trace it validates.
+Dataset load_edgelist(const std::string &edgefile, const std::string &labelfile);
+uint64_t fnv1a_u64(uint64_t h, uint64_t x) {
+    for (int b = 0; b < 8; ++b) {
+        h ^= (x >> (8 * b)) & 0xffu;
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+struct GraphFingerprint {
+    long long raw_lines = 0, valid_lines = 0, self_loops = 0, duplicate_lines = 0;
+    long long final_unique_edges = 0, degree1 = 0, components = 0;
+    int n = 0;
+    double dmin = 0, dmax = 0, dmean = 0, dmedian = 0;
+    uint64_t edge_hash = 1469598103934665603ULL;
+};
+
+GraphFingerprint graph_fingerprint(const std::string &path, const Dataset &d) {
+    GraphFingerprint fp; fp.n = d.n;
+    std::ifstream in(path); std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        ++fp.raw_lines;
+        std::istringstream ss(line); long long a, b;
+        if (ss >> a >> b) ++fp.valid_lines;
+    }
+    vector<std::pair<int,int>> e; e.reserve(d.edges.size());
+    for (auto x : d.edges) {
+        if (x.first == x.second) ++fp.self_loops;
+        if (x.first > x.second) std::swap(x.first, x.second);
+        e.push_back(x);
+    }
+    std::sort(e.begin(), e.end());
+    vector<std::pair<int,int>> unique;
+    unique.reserve(e.size());
+    for (auto x : e) {
+        if (!unique.empty() && unique.back() == x) ++fp.duplicate_lines;
+        else unique.push_back(x);
+    }
+    fp.final_unique_edges = unique.size();
+    for (auto x : unique) {
+        fp.edge_hash = fnv1a_u64(fp.edge_hash, (uint64_t)(unsigned)x.first);
+        fp.edge_hash = fnv1a_u64(fp.edge_hash, (uint64_t)(unsigned)x.second);
+    }
+    Graph g = Graph::from_edges(d.n, unique);
+    vector<double> deg = g.degree;
+    if (!deg.empty()) {
+        fp.dmin = *std::min_element(deg.begin(), deg.end());
+        fp.dmax = *std::max_element(deg.begin(), deg.end());
+        fp.dmean = std::accumulate(deg.begin(), deg.end(), 0.0) / deg.size();
+        std::sort(deg.begin(), deg.end());
+        fp.dmedian = deg[deg.size() / 2];
+        for (double x : deg) if (x == 1.0) ++fp.degree1;
+    }
+    vector<char> seen(g.n(), 0);
+    std::deque<int> q;
+    for (int s = 0; s < g.n(); ++s) if (!seen[s]) {
+        ++fp.components; seen[s] = 1; q.push_back(s);
+        while (!q.empty()) {
+            int u = q.front(); q.pop_front();
+            for (auto x : g.adj[u]) if (!seen[x.first]) { seen[x.first] = 1; q.push_back(x.first); }
+        }
+    }
+    return fp;
+}
+
+uint64_t trace_hash(const CnmTrace &tr) {
+    uint64_t h = 1469598103934665603ULL;
+    h = fnv1a_u64(h, tr.merges.size());
+    for (size_t t = 0; t < tr.merges.size(); ++t) {
+        h = fnv1a_u64(h, (uint64_t)(unsigned)tr.merges[t].first);
+        h = fnv1a_u64(h, (uint64_t)(unsigned)tr.merges[t].second);
+        uint64_t bits = 0; std::memcpy(&bits, &tr.dq[t], sizeof(bits));
+        h = fnv1a_u64(h, bits);
+    }
+    return h;
+}
+
+void experiment_fingerprint_and_determinism(int argc, char **argv,
+                                            const vector<std::string> &large_specs,
+                                            long long max_pushes) {
+    std::cout << "=== Experiment 15: graph shape and CNM determinism ===\n";
+    std::cout << "graph\traw_lines\tvalid_lines\tN\tunique_edges\tself_loops\tduplicate_lines\t"
+                 "degree_min\tdegree_max\tdegree_mean\tdegree_median\tdegree1\tcomponents\tedge_fnv1a64\t"
+                 "run1_merges\trun2_merges\trun1_trace_fnv1a64\trun2_trace_fnv1a64\tbit_identical\n";
+    auto run = [&](const std::string &name, const std::string &ef, const std::string &lf) {
+        Dataset d = load_edgelist(ef, lf);
+        if (!d.n) return;
+        GraphFingerprint fp = graph_fingerprint(ef, d);
+        Graph g = Graph::from_edges(d.n, d.edges);
+        CnmTrace a = cnm_greedy_trace(g, max_pushes);
+        CnmTrace b = cnm_greedy_trace(g, max_pushes);
+        uint64_t ha = trace_hash(a), hb = trace_hash(b);
+        std::cout << name << "\t" << fp.raw_lines << "\t" << fp.valid_lines << "\t" << fp.n << "\t"
+                  << fp.final_unique_edges << "\t" << fp.self_loops << "\t" << fp.duplicate_lines << "\t"
+                  << fp.dmin << "\t" << fp.dmax << "\t" << fp.dmean << "\t" << fp.dmedian << "\t"
+                  << fp.degree1 << "\t" << fp.components << "\t" << std::hex << fp.edge_hash << std::dec << "\t"
+                  << a.merges.size() << "\t" << b.merges.size() << "\t" << std::hex << ha << "\t" << hb << std::dec << "\t"
+                  << ((a.merges.size() == b.merges.size() && ha == hb) ? "yes" : "no") << "\n";
+    };
+    for (int i = 1; i < argc; ++i) {
+        std::string spec = argv[i];
+        if (spec.rfind("--", 0) == 0 || spec.rfind("large=", 0) == 0) continue;
+        auto eq = spec.find('='); if (eq == std::string::npos) continue;
+        auto colon = spec.find(':', eq + 1);
+        run(spec.substr(0, eq), spec.substr(eq + 1, colon == std::string::npos ? std::string::npos : colon - eq - 1),
+            colon == std::string::npos ? "" : spec.substr(colon + 1));
+    }
+    for (auto spec : large_specs) {
+        auto eq = spec.find('='); if (eq == std::string::npos) continue;
+        auto colon = spec.find(':', eq + 1);
+        run(spec.substr(0, eq), spec.substr(eq + 1, colon == std::string::npos ? std::string::npos : colon - eq - 1),
+            colon == std::string::npos ? "" : spec.substr(colon + 1));
+    }
 }
 
 // --------------------------------------------------------------------------- //
@@ -1332,12 +1471,20 @@ size_t rollstop_cut_detrend(const CnmTrace &tr, int W, double kmult, bool two_si
 // depend on the arbitrary log-dQ scale.  `h` is therefore the single,
 // calibratable control parameter for both procedures.
 size_t rollstop_cut_cusum(const CnmTrace &tr, int W, double h, double delta,
-                          const StopModifiers &mod, bool shiryaev_roberts) {
+                          const StopModifiers &mod, bool shiryaev_roberts,
+                          bool reset_after_defer = false,
+                          long long *window_evals = nullptr) {
     double stat = 0.0;
+    // A deferred test must not inherit singleton-phase observations.  Resetting
+    // here means the first residual is constructed only after W genuinely new
+    // post-singleton dQ values have accumulated.
+    const size_t first_test = (reset_after_defer && mod.defer_singletons)
+        ? tr.singleton_phase_end + (size_t)W : 0;
     for (size_t t = 0; t < tr.dq.size(); ++t) {
-        if (!may_test_at(tr, t, mod)) continue;
+        if (!may_test_at(tr, t, mod) || t < first_test) continue;
         DetrendedPoint p = detrended_log_point(tr, t, W, mod.dispersion);
         if (!p.ready || degenerate_window(p.log_window, p.scale, mod)) continue;
+        if (window_evals) ++*window_evals;
         double x = p.residual / p.scale;
         if (shiryaev_roberts) {
             double lr = std::exp(std::min(700.0, -delta * x - 0.5 * delta * delta));
@@ -2541,6 +2688,72 @@ void experiment_13(int argc, char **argv, const vector<std::string> &large_specs
 }
 
 // --------------------------------------------------------------------------- //
+// Round-4 pruned benchmark.  The historical sweep remains available through
+// --full-stop-report; this mode deliberately reports only the fixed CNM
+// reference and the post-deferral-warmup CUSUM candidate.
+// --------------------------------------------------------------------------- //
+void experiment_round4_report(int argc, char **argv, const vector<std::string> &large_specs,
+                              long long max_pushes, long long max_merges) {
+    constexpr int W = 15;
+    constexpr double H = 50.0, DELTA = 1.0;
+    const StopModifiers deferred{true, Dispersion::SD, 1e-6};
+    std::cout << "=== Experiment 16: round-4 pruned benchmark ===\n";
+    std::cout << "# T5-cusum-warmup clears the singleton-phase history and waits W=15 fresh "
+                 "post-deferral merges before calculating the first detrended residual; h=50 "
+                 "is the previously ER-calibrated common threshold.\n";
+    std::cout << "graph\tmethod\tstop_at\tof_merges\tstop_frac\tK\tQ\tF1\tNMI\tfrac_nonsingleton\t"
+                 "trace_build_ms\trule_eval_ms\ttotal_ms\twindow_evals\n";
+    std::cout << "# WARMUP_CONTROL columns share the above meaning; legacy defer intentionally "
+                 "keeps its stale pre-deferral window and is included only to test the artifact.\n";
+
+    auto run = [&](const std::string &name, const Dataset &d, long long budget) {
+        Graph g = Graph::from_edges(d.n, d.edges);
+        CnmTrace tr = cnm_greedy_trace(g, max_pushes, budget);
+        if (!tr.complete) { std::cout << name << "\tABORTED\n"; return; }
+        const bool labelled = std::any_of(d.gt.begin(), d.gt.end(), [](int x) { return x >= 0; });
+        auto emit = [&](const std::string &method, size_t cut, double eval_ms, long long evals) {
+            vector<int> lab = cnm_labels_at(tr, cut);
+            std::cout << name << "\t" << method << "\t" << cut << "\t" << tr.merges.size() << "\t"
+                      << (tr.merges.empty() ? 0.0 : (double)cut / tr.merges.size()) << "\t"
+                      << num_communities(lab) << "\t" << modularity(g, lab) << "\t";
+            if (labelled) std::cout << community_f1(lab, d.gt) << "\t" << nmi(lab, d.gt);
+            else std::cout << "NA\tNA";
+            std::cout << "\t" << frac_nonsingleton(lab) << "\t" << tr.build_ms << "\t"
+                      << eval_ms << "\t" << (tr.build_ms + eval_ms) << "\t" << evals << "\n";
+        };
+        emit(tr.truncated ? "CNM-prefix" : "CNM-full", tr.merges.size(), 0.0, 0);
+        long long warm_evals = 0;
+        auto t0 = Clock::now();
+        size_t warm = rollstop_cut_cusum(tr, W, H, DELTA, deferred, false, true, &warm_evals);
+        double warm_ms = ms_since(t0);
+        emit("T5-cusum-warmup", warm, warm_ms, warm_evals);
+        long long old_evals = 0;
+        t0 = Clock::now();
+        size_t legacy = rollstop_cut_cusum(tr, W, H, DELTA, deferred, false, false, &old_evals);
+        double legacy_ms = ms_since(t0);
+        emit("WARMUP_CONTROL:T5-cusum-defer-legacy", legacy, legacy_ms, old_evals);
+        std::cout << "# " << name << " singleton_phase_end=" << tr.singleton_phase_end
+                  << " warmup_first_eligible=" << tr.singleton_phase_end + W << "\n";
+    };
+    for (int i = 1; i < argc; ++i) {
+        std::string spec = argv[i];
+        if (spec.rfind("--", 0) == 0 || spec.rfind("large=", 0) == 0) continue;
+        auto eq = spec.find('='); if (eq == std::string::npos) continue;
+        auto colon = spec.find(':', eq + 1);
+        Dataset d = load_edgelist(spec.substr(eq + 1, colon == std::string::npos ? std::string::npos : colon - eq - 1),
+                                  colon == std::string::npos ? "" : spec.substr(colon + 1));
+        if (d.n) run(spec.substr(0, eq), d, 0);
+    }
+    for (const std::string &spec : large_specs) {
+        auto eq = spec.find('='); if (eq == std::string::npos) continue;
+        auto colon = spec.find(':', eq + 1);
+        Dataset d = load_edgelist(spec.substr(eq + 1, colon == std::string::npos ? std::string::npos : colon - eq - 1),
+                                  colon == std::string::npos ? "" : spec.substr(colon + 1));
+        if (d.n) run(spec.substr(0, eq), d, max_merges);
+    }
+}
+
+// --------------------------------------------------------------------------- //
 // Fix 5: post-hoc multi-cut selection.  Candidate cuts are every ceil(T/50)-th
 // merge plus the terminal cut, so at most 51 partitions are evaluated.  This
 // downsampling is stated in the report rather than hiding a search budget.
@@ -2757,6 +2970,8 @@ int main(int argc, char **argv) {
     bool only_roll = false, want_roll_small = false, want_roll_er = false, want_bm_path = false;
     bool want_full_stop_report = false;
     bool want_multicut_report = false;
+    bool want_fingerprint = false;
+    bool want_round4_report = false;
     int report_seeds = 10;  // David-review ER calibration requirement
     int stability_reps = 20;
     int bm_bootstraps = 99;
@@ -2779,6 +2994,8 @@ int main(int argc, char **argv) {
         if (a == "--bm-path") { want_bm_path = true; continue; }
         if (a == "--full-stop-report") { want_full_stop_report = true; continue; }
         if (a == "--multicut-report") { want_multicut_report = true; continue; }
+        if (a == "--fingerprint") { want_fingerprint = true; continue; }
+        if (a == "--round4-report") { want_round4_report = true; continue; }
         if (a.rfind("--report-seeds=", 0) == 0) {
             report_seeds = std::max(1, atoi(a.substr(15).c_str()));
             continue;
@@ -2826,6 +3043,16 @@ int main(int argc, char **argv) {
 
     if (want_full_stop_report) {
         experiment_13(argc, argv, large, max_pushes, max_merges, report_seeds);
+        return 0;
+    }
+
+    if (want_fingerprint) {
+        experiment_fingerprint_and_determinism(argc, argv, large, max_pushes);
+        return 0;
+    }
+
+    if (want_round4_report) {
+        experiment_round4_report(argc, argv, large, max_pushes, max_merges);
         return 0;
     }
 

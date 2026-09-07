@@ -1,0 +1,16 @@
+=== Experiment 16: round-4 pruned benchmark ===
+# T5-cusum-warmup clears the singleton-phase history and waits W=15 fresh post-deferral merges before calculating the first detrended residual; h=50 is the previously ER-calibrated common threshold.
+graph	method	stop_at	of_merges	stop_frac	K	Q	F1	NMI	frac_nonsingleton	trace_build_ms	rule_eval_ms	total_ms	window_evals
+# WARMUP_CONTROL columns share the above meaning; legacy defer intentionally keeps its stale pre-deferral window and is included only to test the artifact.
+karate	CNM-full	31	31	1.000	3	0.381	0.761	0.565	1.000	0.054	0.000	0.054	0
+karate	T5-cusum-warmup	31	31	1.000	3	0.381	0.761	0.565	1.000	0.054	0.000	0.054	0
+karate	WARMUP_CONTROL:T5-cusum-defer-legacy	31	31	1.000	3	0.381	0.761	0.565	1.000	0.054	0.000	0.054	0
+# karate singleton_phase_end=31 warmup_first_eligible=46
+polblogs	CNM-full	1485	1485	1.000	5	0.354	0.691	0.878	1.000	52.313	0.000	52.313	0
+polblogs	T5-cusum-warmup	1485	1485	1.000	5	0.354	0.691	0.878	1.000	52.313	0.001	52.314	0
+polblogs	WARMUP_CONTROL:T5-cusum-defer-legacy	1485	1485	1.000	5	0.354	0.691	0.878	1.000	52.313	0.003	52.316	2
+# polblogs singleton_phase_end=1483 warmup_first_eligible=1498
+email	CNM-full	978	978	1.000	8	0.347	0.283	0.427	1.000	25.115	0.000	25.115	0
+email	T5-cusum-warmup	978	978	1.000	8	0.347	0.283	0.427	1.000	25.115	0.001	25.116	0
+email	WARMUP_CONTROL:T5-cusum-defer-legacy	978	978	1.000	8	0.347	0.283	0.427	1.000	25.115	0.002	25.117	1
+# email singleton_phase_end=977 warmup_first_eligible=992

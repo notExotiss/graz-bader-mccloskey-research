@@ -1,0 +1,51 @@
+=== Experiment 16: round-4 pruned benchmark ===
+# T5-cusum-warmup clears the singleton-phase history and waits W=15 fresh post-deferral merges before calculating the first detrended residual; h=50 is the previously ER-calibrated common threshold.
+graph	method	stop_at	of_merges	stop_frac	K	Q	F1	NMI	frac_nonsingleton	trace_build_ms	rule_eval_ms	total_ms	window_evals
+# WARMUP_CONTROL columns share the above meaning; legacy defer intentionally keeps its stale pre-deferral window and is included only to test the artifact.
+lfr_n1000_mu1	CNM-full	987	987	1.000	13	0.704	0.832	0.916	1.000	14.482	0.000	14.482	0
+lfr_n1000_mu1	T5-cusum-warmup	987	987	1.000	13	0.704	0.832	0.916	1.000	14.482	0.001	14.483	0
+lfr_n1000_mu1	WARMUP_CONTROL:T5-cusum-defer-legacy	987	987	1.000	13	0.704	0.832	0.916	1.000	14.482	0.001	14.483	0
+# lfr_n1000_mu1 singleton_phase_end=987 warmup_first_eligible=1002
+lfr_n1000_mu3	CNM-full	994	994	1.000	6	0.373	0.544	0.602	1.000	22.272	0.000	22.272	0
+lfr_n1000_mu3	T5-cusum-warmup	994	994	1.000	6	0.373	0.544	0.602	1.000	22.272	0.001	22.273	0
+lfr_n1000_mu3	WARMUP_CONTROL:T5-cusum-defer-legacy	994	994	1.000	6	0.373	0.544	0.602	1.000	22.272	0.001	22.272	0
+# lfr_n1000_mu3 singleton_phase_end=994 warmup_first_eligible=1009
+lfr_n1000_mu5	CNM-full	994	994	1.000	6	0.188	0.224	0.166	1.000	31.725	0.000	31.725	0
+lfr_n1000_mu5	T5-cusum-warmup	994	994	1.000	6	0.188	0.224	0.166	1.000	31.725	0.001	31.726	0
+lfr_n1000_mu5	WARMUP_CONTROL:T5-cusum-defer-legacy	994	994	1.000	6	0.188	0.224	0.166	1.000	31.725	0.002	31.727	1
+# lfr_n1000_mu5 singleton_phase_end=993 warmup_first_eligible=1008
+lfr_n1000_mu7	CNM-full	995	995	1.000	5	0.164	0.166	0.035	1.000	33.073	0.000	33.073	0
+lfr_n1000_mu7	T5-cusum-warmup	995	995	1.000	5	0.164	0.166	0.035	1.000	33.073	0.001	33.073	0
+lfr_n1000_mu7	WARMUP_CONTROL:T5-cusum-defer-legacy	995	995	1.000	5	0.164	0.166	0.035	1.000	33.073	0.003	33.075	2
+# lfr_n1000_mu7 singleton_phase_end=993 warmup_first_eligible=1008
+lfr_n5000_mu1	CNM-full	4974	4974	1.000	26	0.766	0.751	0.865	1.000	236.465	0.000	236.465	0
+lfr_n5000_mu1	T5-cusum-warmup	4974	4974	1.000	26	0.766	0.751	0.865	1.000	236.465	0.003	236.468	0
+lfr_n5000_mu1	WARMUP_CONTROL:T5-cusum-defer-legacy	4973	4974	1.000	27	0.766	0.764	0.866	1.000	236.465	0.004	236.469	1
+# lfr_n5000_mu1 singleton_phase_end=4973 warmup_first_eligible=4988
+lfr_n5000_mu3	CNM-full	4992	4992	1.000	8	0.392	0.396	0.531	1.000	627.250	0.000	627.250	0
+lfr_n5000_mu3	T5-cusum-warmup	4992	4992	1.000	8	0.392	0.396	0.531	1.000	627.250	0.003	627.253	0
+lfr_n5000_mu3	WARMUP_CONTROL:T5-cusum-defer-legacy	4992	4992	1.000	8	0.392	0.396	0.531	1.000	627.250	0.003	627.253	0
+# lfr_n5000_mu3 singleton_phase_end=4992 warmup_first_eligible=5007
+lfr_n5000_mu5	CNM-full	4994	4994	1.000	6	0.202	0.138	0.155	1.000	1007.577	0.000	1007.577	0
+lfr_n5000_mu5	T5-cusum-warmup	4994	4994	1.000	6	0.202	0.138	0.155	1.000	1007.577	0.003	1007.580	0
+lfr_n5000_mu5	WARMUP_CONTROL:T5-cusum-defer-legacy	4994	4994	1.000	6	0.202	0.138	0.155	1.000	1007.577	0.007	1007.584	6
+# lfr_n5000_mu5 singleton_phase_end=4988 warmup_first_eligible=5003
+lfr_n5000_mu7	CNM-full	4993	4993	1.000	7	0.168	0.064	0.026	1.000	1036.644	0.000	1036.644	0
+lfr_n5000_mu7	T5-cusum-warmup	4993	4993	1.000	7	0.168	0.064	0.026	1.000	1036.644	0.003	1036.647	0
+lfr_n5000_mu7	WARMUP_CONTROL:T5-cusum-defer-legacy	4993	4993	1.000	7	0.168	0.064	0.026	1.000	1036.644	0.005	1036.649	2
+# lfr_n5000_mu7 singleton_phase_end=4991 warmup_first_eligible=5006
+cora	CNM-full	2603	2603	1.000	105	0.804	0.209	0.208	1.000	19.296	0.000	19.296	0
+cora	T5-cusum-warmup	2602	2603	1.000	106	0.804	0.209	0.208	1.000	19.296	0.010	19.305	37
+cora	WARMUP_CONTROL:T5-cusum-defer-legacy	2602	2603	1.000	106	0.804	0.209	0.208	1.000	19.296	0.012	19.307	52
+# cora singleton_phase_end=2551 warmup_first_eligible=2566
+citeseer	CNM-full	2840	2840	1.000	439	0.870	0.130	0.212	1.000	10.424	0.000	10.424	0
+citeseer	T5-cusum-warmup	2838	2840	0.999	441	0.870	0.130	0.212	1.000	10.424	0.010	10.434	37
+citeseer	WARMUP_CONTROL:T5-cusum-defer-legacy	2787	2840	0.981	492	0.865	0.121	0.218	1.000	10.424	0.002	10.426	1
+# citeseer singleton_phase_end=2787 warmup_first_eligible=2802
+    ...5000 merges, heap 5245914, nbr_entries 64146 (max deg 3427), 437 ms
+    ...10000 merges, heap 8840071, nbr_entries 27216 (max deg 2978), 973 ms
+    ...15000 merges, heap 7343807, nbr_entries 10608 (max deg 2175), 1584 ms
+pubmed	CNM-full	19597	19597	1.000	120	0.727	0.277	0.197	1.000	4373.598	0.000	4373.598	0
+pubmed	T5-cusum-warmup	19597	19597	1.000	120	0.727	0.277	0.197	1.000	4373.598	0.023	4373.621	55
+pubmed	WARMUP_CONTROL:T5-cusum-defer-legacy	19597	19597	1.000	120	0.727	0.277	0.197	1.000	4373.598	0.024	4373.623	70
+# pubmed singleton_phase_end=19527 warmup_first_eligible=19542

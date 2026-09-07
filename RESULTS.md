@@ -1,316 +1,87 @@
-# Bader--McCloskey stopping-rule revision
+# Bader--McCloskey stopping-rule revision, round 4
 
-- Implemented: detrended log-residual tests (T4), calibrated CUSUM and Shiryaev--Roberts tests (T5), singleton-phase deferral, robust MAD dispersion, the requested community-level Eq. 6 BM-native stop, CM baselines, and a replay-based multi-cut report. CNM candidate ordering is unchanged.
-- Completed in this run: the 10-seed ER calibration/sweep, all three small labelled graphs, and true no-budget CNM-full Amazon/DBLP runs. Amazon has 333,388 merges; DBLP has 313,936 merges. The local static build is unavailable on macOS (`crt0.o` is absent), but `g++ -O2 -std=c++17` builds and the new modes pass smoke tests.
-- Amazon/DBLP full rows and plateau dumps are complete. Large-graph multicut stability runs remain unrun; the existing project evidence shows that full LiveJournal CNM is multi-day work and it has not been represented as CNM-full.
-- CNM naming: `CNM-full` means the natural positive-dQ terminus with no merge budget. If `--max-merges=N` is used, the report prints `CNM-prefix`, the exact prefix length and budget; it never labels that row CNM-full.
-- This is not evidence that the new rule beats CNM. On the completed small tests, deferral frequently recovers CNM's terminal cut, while unmodified trace tests and the literal adaptive BM-native threshold can still stop destructively early.
+- Completed: graph-shape and repeat-trace validation; deterministic CNM tie-breaking; trace/rule runtime instrumentation; singleton-deferral warm-up control; LFR, Cora, Citeseer, PubMed, and ego-Facebook preparation and benchmark runs.
+- Resolution of Finding C: the four checked prepared edge files are byte-identical between the initial checked-in revision and this revision. The prior CNM heap compared equal dQ values without a secondary key while neighbour insertion came from unordered maps. CNM now sorts initial adjacency and breaks exact dQ ties by the lexicographically smaller live community pair. Repeat traces are bit-identical after this fix.
+- Resolution of Finding A: artifact confirmed. Legacy deferred CUSUM fires at the singleton boundary; clearing the history and requiring 15 fresh merges fires later (Amazon +160 merges, DBLP +14). Amazon still exceeds CNM-full on F1/NMI; DBLP improves NMI but not F1.
+- Default benchmark rows contain only CNM-full and the corrected current candidate, `T5-cusum-warmup`. The legacy-defer control is reported only in the warm-up diagnostic. Historical full sweeps remain runnable via `--full-stop-report`.
+- CNM-full means the unbudgeted positive-dQ greedy terminus. No merge budget was used in this report. com-Orkut was not attempted because it is substantially larger than the completed suite. Linux static linking could not be tested locally: macOS clang lacks `crt0.o`; non-static C++17 compilation passed.
 
-## ER nulls -- full rule comparison
+## Graph-shape fingerprints and CNM determinism
 
-T4 fits OLS to the preceding W log-dQ values and compares the current extrapolation residual to the fitted-residual dispersion. T5 applies CUSUM or Shiryaev--Roberts to that same standardized residual stream. The CUSUM threshold was selected once, before real-network evaluation: the smallest grid value giving mean ARL at least 90% of the CNM trace length over 10 seeds at N=1000, 2000, 5000, and 10000.
+`edge_fnv1a64` hashes sorted loaded undirected edge pairs. `raw_lines` and `unique_edges` are equal for all four audited source files: no self-loops or duplicate lines were removed.
 
-| h | mean ARL | mean available merges | stop_frac |
-| --- | ---: | ---: | ---: |
-| 2 | 30.725 | 4489.500 | 0.007 |
-| 5 | 46.075 | 4489.500 | 0.010 |
-| 10 | 77.300 | 4489.500 | 0.017 |
-| 20 | 2009.100 | 4489.500 | 0.448 |
-| 50 (selected) | 4233.375 | 4489.500 | 0.943 |
-| 100 | 4489.500 | 4489.500 | 1.000 |
-| 200 | 4489.500 | 4489.500 | 1.000 |
+| graph | raw_lines | N | unique_edges | degree_min | degree_max | degree_mean | degree_median | degree1 | components | edge_fnv1a64 | run1_merges | run2_merges | trace_bit_identical |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | --- |
+| amazon_full | 925872 | 334863 | 925872 | 1 | 549 | 5.530 | 4 | 25709 | 1 | c6ef7c480926a0ca | 333516 | 333516 | yes |
+| dblp_full | 1049866 | 317080 | 1049866 | 1 | 343 | 6.622 | 4 | 43181 | 1 | 486fa1d9ccdfc276 | 313729 | 313729 | yes |
+| polblogs | 10260 | 1490 | 10260 | 3 | 27 | 13.772 | 14 | 0 | 1 | cd198b891fe4c37c | 1485 | 1485 | yes |
+| email | 16064 | 986 | 16064 | 1 | 345 | 32.584 | 22 | 95 | 1 | afc9879412eeb06f | 978 | 978 | yes |
 
-The complete emitted table contains every T4 `(W,k,sided)` combination and all `{none,defer,mad,defer+mad}` modifiers. Its key negative finding is structural: without deferral, T1--T5 tend to fire in the first few percent of an ER trace; with deferral, they usually run almost the complete trace and therefore inherit CNM's spurious ER communities. The `frac_nonsingleton` column makes that tradeoff explicit in the machine-readable runner output.
+## Singleton warm-up control
 
-## Small real-network sweep
+`T5-cusum-warmup` clears all pre-deferral dQ history and waits W=15 fresh post-singleton merges. `WARMUP_CONTROL` is legacy deferred CUSUM and is diagnostic-only.
 
-All rows below include `frac_nonsingleton`, and `stop_at / of_merges` gives the requested raw and fractional firing index.
+| graph | method | stop_at | of_merges | stop_frac | K | Q | F1 | NMI | frac_nonsingleton | trace_build_ms | rule_eval_ms | total_ms | window_evals |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| amazon_full | CNM-full | 333516 | 333516 | 1.000 | 1347 | 0.871 | 0.616 | 0.886 | 1.000 | 63686.019 | 0.000 | 63686.019 | 0 |
+| amazon_full | T5-cusum-warmup | 332306 | 333516 | 0.996 | 2557 | 0.870 | 0.678 | 0.914 | 1.000 | 63686.019 | 0.201 | 63686.220 | 146 |
+| amazon_full | WARMUP_CONTROL:T5-cusum-defer-legacy | 332146 | 333516 | 0.996 | 2717 | 0.870 | 0.692 | 0.920 | 1.000 | 63686.019 | 0.172 | 63686.192 | 1 |
+| dblp_full | CNM-full | 313729 | 313729 | 1.000 | 3351 | 0.733 | 0.347 | 0.512 | 1.000 | 149653.292 | 0.000 | 149653.292 | 0 |
+| dblp_full | T5-cusum-warmup | 312095 | 313729 | 0.995 | 4985 | 0.732 | 0.344 | 0.526 | 1.000 | 149653.292 | 0.167 | 149653.459 | 22 |
+| dblp_full | WARMUP_CONTROL:T5-cusum-defer-legacy | 312081 | 313729 | 0.995 | 4999 | 0.732 | 0.344 | 0.526 | 1.000 | 149653.292 | 0.169 | 149653.461 | 23 |
 
-| graph | method | stop_at | of_merges | stop_frac | K | Q | F1 | NMI | frac_nonsingleton |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| karate | CNM-full | 31 | 31 | 1.000 | 3 | 0.381 | 0.761 | 0.565 | 1.000 |
-| karate | T5-cusum (h=50) | 31 | 31 | 1.000 | 3 | 0.381 | 0.761 | 0.565 | 1.000 |
-| karate | BM-native-stop (tau=2) | 0 | 31 | 0.000 | 34 | -0.050 | 0.111 | 0.329 | 0.000 |
-| polblogs | CNM-full | 1482 | 1482 | 1.000 | 8 | 0.354 | 0.617 | 0.866 | 1.000 |
-| polblogs | T4 detrend, defer | 1480 | 1482 | 0.999 | 10 | 0.354 | 0.592 | 0.861 | 1.000 |
-| polblogs | T5-cusum (h=50) | 1482 | 1482 | 1.000 | 8 | 0.354 | 0.617 | 0.866 | 1.000 |
-| polblogs | BM-native-stop (tau=2) | 165 | 1482 | 0.111 | 1325 | 0.016 | 0.007 | 0.172 | 0.216 |
-| email | CNM-full | 978 | 978 | 1.000 | 8 | 0.347 | 0.283 | 0.427 | 1.000 |
-| email | T5-cusum (h=50) | 919 | 978 | 0.940 | 67 | 0.345 | 0.195 | 0.479 | 0.942 |
-| email | BM-native-stop (tau=2) | 6 | 978 | 0.006 | 980 | -0.002 | 0.143 | 0.651 | 0.011 |
+## Pruned benchmark: existing labelled networks
 
-CM baseline with each `c in {1,5,10,50}` fired at cut 0 on all three small graphs, so it is an intentionally stringent reference rather than a competitive partitioning method at those scales.
+| graph | method | stop_at | of_merges | stop_frac | K | Q | F1 | NMI | frac_nonsingleton | trace_build_ms | rule_eval_ms | total_ms | window_evals |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| karate | CNM-full | 31 | 31 | 1.000 | 3 | 0.381 | 0.761 | 0.565 | 1.000 | 0.054 | 0.000 | 0.054 | 0 |
+| karate | T5-cusum-warmup | 31 | 31 | 1.000 | 3 | 0.381 | 0.761 | 0.565 | 1.000 | 0.054 | 0.000 | 0.054 | 0 |
+| polblogs | CNM-full | 1485 | 1485 | 1.000 | 5 | 0.354 | 0.691 | 0.878 | 1.000 | 52.313 | 0.000 | 52.313 | 0 |
+| polblogs | T5-cusum-warmup | 1485 | 1485 | 1.000 | 5 | 0.354 | 0.691 | 0.878 | 1.000 | 52.313 | 0.001 | 52.314 | 0 |
+| email | CNM-full | 978 | 978 | 1.000 | 8 | 0.347 | 0.283 | 0.427 | 1.000 | 25.115 | 0.000 | 25.115 | 0 |
+| email | T5-cusum-warmup | 978 | 978 | 1.000 | 8 | 0.347 | 0.283 | 0.427 | 1.000 | 25.115 | 0.001 | 25.116 | 0 |
+| ego_facebook | CNM-full | 4026 | 4026 | 1.000 | 13 | 0.777 | 0.319 | 0.531 | 1.000 | 189.168 | 0.000 | 189.168 | 0 |
+| ego_facebook | T5-cusum-warmup | 4026 | 4026 | 1.000 | 13 | 0.777 | 0.319 | 0.531 | 1.000 | 189.168 | 0.002 | 189.171 | 0 |
 
-## Large real-network sweep
+## Pruned benchmark: LFR
 
-Both graphs completed true CNM-full runs with no merge budget. The full rows below are extracted directly from `amazon_dblp.log`; each row reports the exact stopping index and the resulting K, Q, SNAP F1, SNAP NMI, stop fraction, and non-singleton node fraction.
+| graph | method | stop_at | of_merges | stop_frac | K | Q | F1 | NMI | frac_nonsingleton | trace_build_ms | rule_eval_ms | total_ms | window_evals |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| lfr_n1000_mu1 | CNM-full | 987 | 987 | 1.000 | 13 | 0.704 | 0.832 | 0.916 | 1.000 | 14.482 | 0.000 | 14.482 | 0 |
+| lfr_n1000_mu1 | T5-cusum-warmup | 987 | 987 | 1.000 | 13 | 0.704 | 0.832 | 0.916 | 1.000 | 14.482 | 0.001 | 14.483 | 0 |
+| lfr_n1000_mu3 | CNM-full | 994 | 994 | 1.000 | 6 | 0.373 | 0.544 | 0.602 | 1.000 | 22.272 | 0.000 | 22.272 | 0 |
+| lfr_n1000_mu3 | T5-cusum-warmup | 994 | 994 | 1.000 | 6 | 0.373 | 0.544 | 0.602 | 1.000 | 22.272 | 0.001 | 22.273 | 0 |
+| lfr_n1000_mu5 | CNM-full | 994 | 994 | 1.000 | 6 | 0.188 | 0.224 | 0.166 | 1.000 | 31.725 | 0.000 | 31.725 | 0 |
+| lfr_n1000_mu5 | T5-cusum-warmup | 994 | 994 | 1.000 | 6 | 0.188 | 0.224 | 0.166 | 1.000 | 31.725 | 0.001 | 31.726 | 0 |
+| lfr_n1000_mu7 | CNM-full | 995 | 995 | 1.000 | 5 | 0.164 | 0.166 | 0.035 | 1.000 | 33.073 | 0.000 | 33.073 | 0 |
+| lfr_n1000_mu7 | T5-cusum-warmup | 995 | 995 | 1.000 | 5 | 0.164 | 0.166 | 0.035 | 1.000 | 33.073 | 0.001 | 33.073 | 0 |
+| lfr_n5000_mu1 | CNM-full | 4974 | 4974 | 1.000 | 26 | 0.766 | 0.751 | 0.865 | 1.000 | 236.465 | 0.000 | 236.465 | 0 |
+| lfr_n5000_mu1 | T5-cusum-warmup | 4974 | 4974 | 1.000 | 26 | 0.766 | 0.751 | 0.865 | 1.000 | 236.465 | 0.003 | 236.468 | 0 |
+| lfr_n5000_mu3 | CNM-full | 4992 | 4992 | 1.000 | 8 | 0.392 | 0.396 | 0.531 | 1.000 | 627.250 | 0.000 | 627.250 | 0 |
+| lfr_n5000_mu3 | T5-cusum-warmup | 4992 | 4992 | 1.000 | 8 | 0.392 | 0.396 | 0.531 | 1.000 | 627.250 | 0.003 | 627.253 | 0 |
+| lfr_n5000_mu5 | CNM-full | 4994 | 4994 | 1.000 | 6 | 0.202 | 0.138 | 0.155 | 1.000 | 1007.577 | 0.000 | 1007.577 | 0 |
+| lfr_n5000_mu5 | T5-cusum-warmup | 4994 | 4994 | 1.000 | 6 | 0.202 | 0.138 | 0.155 | 1.000 | 1007.577 | 0.003 | 1007.580 | 0 |
+| lfr_n5000_mu7 | CNM-full | 4993 | 4993 | 1.000 | 7 | 0.168 | 0.064 | 0.026 | 1.000 | 1036.644 | 0.000 | 1036.644 | 0 |
+| lfr_n5000_mu7 | T5-cusum-warmup | 4993 | 4993 | 1.000 | 7 | 0.168 | 0.064 | 0.026 | 1.000 | 1036.644 | 0.003 | 1036.647 | 0 |
 
-| graph | method | modifier | W | parameter | sided | K | Q | F1 | NMI | stop_at | of_merges | stop_frac | frac_nonsingleton |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| amazon_full | CNM-full | - | 0 | 0.000 | 1 | 1475.000 | 0.871 | 0.622 | 0.884 | 333388.000 | 333388.000 | 1.000 | 1.000 |
-| amazon_full | T1-2sided-k1 | none | 10 | 1.000 | 2 | 332415.000 | 0.003 | 0.241 | 0.822 | 2448.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T2-short-1sided | none | 5 | 5.000 | 1 | 321864.000 | 0.015 | 0.272 | 0.824 | 12999.000 | 333388.000 | 0.039 | 0.073 |
-| amazon_full | T3-diff-1sided | none | 15 | 3.000 | 1 | 332415.000 | 0.003 | 0.241 | 0.822 | 2448.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-1sided | none | 10 | 1.000 | 1 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-2sided | none | 10 | 1.000 | 2 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-1sided | none | 10 | 2.000 | 1 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-2sided | none | 10 | 2.000 | 2 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-1sided | none | 10 | 3.000 | 1 | 321930.000 | 0.015 | 0.272 | 0.824 | 12933.000 | 333388.000 | 0.039 | 0.073 |
-| amazon_full | T4-detrend-2sided | none | 10 | 3.000 | 2 | 329935.000 | 0.005 | 0.241 | 0.822 | 4928.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-1sided | none | 15 | 1.000 | 1 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-2sided | none | 15 | 1.000 | 2 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-1sided | none | 15 | 2.000 | 1 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-2sided | none | 15 | 2.000 | 2 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-1sided | none | 15 | 3.000 | 1 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-2sided | none | 15 | 3.000 | 2 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-1sided | none | 20 | 1.000 | 1 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-2sided | none | 20 | 1.000 | 2 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-1sided | none | 20 | 2.000 | 1 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-2sided | none | 20 | 2.000 | 2 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-1sided | none | 20 | 3.000 | 1 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T4-detrend-2sided | none | 20 | 3.000 | 2 | 332414.000 | 0.003 | 0.241 | 0.822 | 2449.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T5-cusum | none | 15 | 50.000 | 1 | 320154.000 | 0.021 | 0.272 | 0.824 | 14709.000 | 333388.000 | 0.044 | 0.078 |
-| amazon_full | T5-sr | none | 15 | 50.000 | 1 | 332413.000 | 0.003 | 0.241 | 0.822 | 2450.000 | 333388.000 | 0.007 | 0.015 |
-| amazon_full | T1-2sided-k1 | defer | 10 | 1.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T2-short-1sided | defer | 5 | 5.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T3-diff-1sided | defer | 15 | 3.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer | 10 | 1.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer | 10 | 1.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer | 10 | 2.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer | 10 | 2.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer | 10 | 3.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer | 10 | 3.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer | 15 | 1.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer | 15 | 1.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer | 15 | 2.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer | 15 | 2.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer | 15 | 3.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer | 15 | 3.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer | 20 | 1.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer | 20 | 1.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer | 20 | 2.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer | 20 | 2.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer | 20 | 3.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer | 20 | 3.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T5-cusum | defer | 15 | 50.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T5-sr | defer | 15 | 50.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T1-2sided-k1 | mad | 10 | 1.000 | 2 | 321936.000 | 0.015 | 0.272 | 0.824 | 12927.000 | 333388.000 | 0.039 | 0.073 |
-| amazon_full | T2-short-1sided | mad | 5 | 5.000 | 1 | 329346.000 | 0.006 | 0.244 | 0.822 | 5517.000 | 333388.000 | 0.017 | 0.033 |
-| amazon_full | T3-diff-1sided | mad | 15 | 3.000 | 1 | 321912.000 | 0.015 | 0.272 | 0.824 | 12951.000 | 333388.000 | 0.039 | 0.073 |
-| amazon_full | T4-detrend-1sided | mad | 10 | 1.000 | 1 | 329934.000 | 0.005 | 0.241 | 0.822 | 4929.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-2sided | mad | 10 | 1.000 | 2 | 329934.000 | 0.005 | 0.241 | 0.822 | 4929.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-1sided | mad | 10 | 2.000 | 1 | 329933.000 | 0.005 | 0.241 | 0.822 | 4930.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-2sided | mad | 10 | 2.000 | 2 | 329933.000 | 0.005 | 0.241 | 0.822 | 4930.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-1sided | mad | 10 | 3.000 | 1 | 329930.000 | 0.005 | 0.241 | 0.822 | 4933.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-2sided | mad | 10 | 3.000 | 2 | 329930.000 | 0.005 | 0.241 | 0.822 | 4933.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-1sided | mad | 15 | 1.000 | 1 | 329934.000 | 0.005 | 0.241 | 0.822 | 4929.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-2sided | mad | 15 | 1.000 | 2 | 329934.000 | 0.005 | 0.241 | 0.822 | 4929.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-1sided | mad | 15 | 2.000 | 1 | 329931.000 | 0.005 | 0.241 | 0.822 | 4932.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-2sided | mad | 15 | 2.000 | 2 | 329931.000 | 0.005 | 0.241 | 0.822 | 4932.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-1sided | mad | 15 | 3.000 | 1 | 329928.000 | 0.005 | 0.241 | 0.822 | 4935.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-2sided | mad | 15 | 3.000 | 2 | 329928.000 | 0.005 | 0.241 | 0.822 | 4935.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-1sided | mad | 20 | 1.000 | 1 | 329934.000 | 0.005 | 0.241 | 0.822 | 4929.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-2sided | mad | 20 | 1.000 | 2 | 329934.000 | 0.005 | 0.241 | 0.822 | 4929.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-1sided | mad | 20 | 2.000 | 1 | 329932.000 | 0.005 | 0.241 | 0.822 | 4931.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-2sided | mad | 20 | 2.000 | 2 | 329932.000 | 0.005 | 0.241 | 0.822 | 4931.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-1sided | mad | 20 | 3.000 | 1 | 329926.000 | 0.005 | 0.241 | 0.822 | 4937.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T4-detrend-2sided | mad | 20 | 3.000 | 2 | 329926.000 | 0.005 | 0.241 | 0.822 | 4937.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T5-cusum | mad | 15 | 50.000 | 1 | 329722.000 | 0.006 | 0.242 | 0.822 | 5141.000 | 333388.000 | 0.015 | 0.031 |
-| amazon_full | T5-sr | mad | 15 | 50.000 | 1 | 329932.000 | 0.005 | 0.241 | 0.822 | 4931.000 | 333388.000 | 0.015 | 0.029 |
-| amazon_full | T1-2sided-k1 | defer+mad | 10 | 1.000 | 2 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T2-short-1sided | defer+mad | 5 | 5.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T3-diff-1sided | defer+mad | 15 | 3.000 | 1 | 2988.000 | 0.870 | 0.695 | 0.918 | 331875.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer+mad | 10 | 1.000 | 1 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer+mad | 10 | 1.000 | 2 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer+mad | 10 | 2.000 | 1 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer+mad | 10 | 2.000 | 2 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer+mad | 10 | 3.000 | 1 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer+mad | 10 | 3.000 | 2 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer+mad | 15 | 1.000 | 1 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer+mad | 15 | 1.000 | 2 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer+mad | 15 | 2.000 | 1 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer+mad | 15 | 2.000 | 2 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer+mad | 15 | 3.000 | 1 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer+mad | 15 | 3.000 | 2 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer+mad | 20 | 1.000 | 1 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer+mad | 20 | 1.000 | 2 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer+mad | 20 | 2.000 | 1 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer+mad | 20 | 2.000 | 2 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-1sided | defer+mad | 20 | 3.000 | 1 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T4-detrend-2sided | defer+mad | 20 | 3.000 | 2 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | T5-cusum | defer+mad | 15 | 50.000 | 1 | 2809.000 | 0.870 | 0.684 | 0.914 | 332054.000 | 333388.000 | 0.996 | 1.000 |
-| amazon_full | T5-sr | defer+mad | 15 | 50.000 | 1 | 2987.000 | 0.870 | 0.695 | 0.918 | 331876.000 | 333388.000 | 0.995 | 1.000 |
-| amazon_full | BM-native-stop | - | 0 | 2.000 | 1 | 321522.000 | 0.016 | 0.272 | 0.824 | 13341.000 | 333388.000 | 0.040 | 0.074 |
-| amazon_full | cm-baseline | - | 0 | 1.000 | 1 | 334863.000 | -0.000 | 0.240 | 0.822 | 0.000 | 333388.000 | 0.000 | 0.000 |
-| amazon_full | cm-baseline | - | 0 | 5.000 | 1 | 334863.000 | -0.000 | 0.240 | 0.822 | 0.000 | 333388.000 | 0.000 | 0.000 |
-| amazon_full | cm-baseline | - | 0 | 10.000 | 1 | 334863.000 | -0.000 | 0.240 | 0.822 | 0.000 | 333388.000 | 0.000 | 0.000 |
-| amazon_full | cm-baseline | - | 0 | 50.000 | 1 | 334863.000 | -0.000 | 0.240 | 0.822 | 0.000 | 333388.000 | 0.000 | 0.000 |
-| dblp_full | CNM-full | - | 0 | 0.000 | 1 | 3144.000 | 0.731 | 0.359 | 0.486 | 313936.000 | 313936.000 | 1.000 | 1.000 |
-| dblp_full | T1-2sided-k1 | none | 10 | 1.000 | 2 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T2-short-1sided | none | 5 | 5.000 | 1 | 313132.000 | 0.004 | 0.167 | 0.716 | 3948.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T3-diff-1sided | none | 15 | 3.000 | 1 | 315359.000 | 0.002 | 0.167 | 0.716 | 1721.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-1sided | none | 10 | 1.000 | 1 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-2sided | none | 10 | 1.000 | 2 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-1sided | none | 10 | 2.000 | 1 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-2sided | none | 10 | 2.000 | 2 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-1sided | none | 10 | 3.000 | 1 | 286845.000 | 0.039 | 0.183 | 0.718 | 30235.000 | 313936.000 | 0.096 | 0.150 |
-| dblp_full | T4-detrend-2sided | none | 10 | 3.000 | 2 | 313131.000 | 0.004 | 0.167 | 0.716 | 3949.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-1sided | none | 15 | 1.000 | 1 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-2sided | none | 15 | 1.000 | 2 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-1sided | none | 15 | 2.000 | 1 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-2sided | none | 15 | 2.000 | 2 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-1sided | none | 15 | 3.000 | 1 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-2sided | none | 15 | 3.000 | 2 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-1sided | none | 20 | 1.000 | 1 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-2sided | none | 20 | 1.000 | 2 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-1sided | none | 20 | 2.000 | 1 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-2sided | none | 20 | 2.000 | 2 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-1sided | none | 20 | 3.000 | 1 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T4-detrend-2sided | none | 20 | 3.000 | 2 | 315358.000 | 0.002 | 0.167 | 0.716 | 1722.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T5-cusum | none | 15 | 50.000 | 1 | 282969.000 | 0.068 | 0.183 | 0.716 | 34111.000 | 313936.000 | 0.109 | 0.161 |
-| dblp_full | T5-sr | none | 15 | 50.000 | 1 | 315357.000 | 0.002 | 0.167 | 0.716 | 1723.000 | 313936.000 | 0.005 | 0.011 |
-| dblp_full | T1-2sided-k1 | defer | 10 | 1.000 | 2 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T2-short-1sided | defer | 5 | 5.000 | 1 | 4922.000 | 0.730 | 0.341 | 0.500 | 312158.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T3-diff-1sided | defer | 15 | 3.000 | 1 | 4922.000 | 0.730 | 0.341 | 0.500 | 312158.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer | 10 | 1.000 | 1 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer | 10 | 1.000 | 2 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer | 10 | 2.000 | 1 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer | 10 | 2.000 | 2 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer | 10 | 3.000 | 1 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer | 10 | 3.000 | 2 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer | 15 | 1.000 | 1 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer | 15 | 1.000 | 2 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer | 15 | 2.000 | 1 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer | 15 | 2.000 | 2 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer | 15 | 3.000 | 1 | 4922.000 | 0.730 | 0.341 | 0.500 | 312158.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer | 15 | 3.000 | 2 | 4922.000 | 0.730 | 0.341 | 0.500 | 312158.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer | 20 | 1.000 | 1 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer | 20 | 1.000 | 2 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer | 20 | 2.000 | 1 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer | 20 | 2.000 | 2 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer | 20 | 3.000 | 1 | 4922.000 | 0.730 | 0.341 | 0.500 | 312158.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer | 20 | 3.000 | 2 | 4922.000 | 0.730 | 0.341 | 0.500 | 312158.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T5-cusum | defer | 15 | 50.000 | 1 | 4922.000 | 0.730 | 0.341 | 0.500 | 312158.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T5-sr | defer | 15 | 50.000 | 1 | 4923.000 | 0.730 | 0.341 | 0.500 | 312157.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T1-2sided-k1 | mad | 10 | 1.000 | 2 | 286908.000 | 0.039 | 0.182 | 0.718 | 30172.000 | 313936.000 | 0.096 | 0.150 |
-| dblp_full | T2-short-1sided | mad | 5 | 5.000 | 1 | 313123.000 | 0.004 | 0.167 | 0.716 | 3957.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T3-diff-1sided | mad | 15 | 3.000 | 1 | 313113.000 | 0.004 | 0.167 | 0.716 | 3967.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-1sided | mad | 10 | 1.000 | 1 | 313130.000 | 0.004 | 0.167 | 0.716 | 3950.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-2sided | mad | 10 | 1.000 | 2 | 313130.000 | 0.004 | 0.167 | 0.716 | 3950.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-1sided | mad | 10 | 2.000 | 1 | 313129.000 | 0.004 | 0.167 | 0.716 | 3951.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-2sided | mad | 10 | 2.000 | 2 | 313129.000 | 0.004 | 0.167 | 0.716 | 3951.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-1sided | mad | 10 | 3.000 | 1 | 312934.000 | 0.004 | 0.168 | 0.716 | 4146.000 | 313936.000 | 0.013 | 0.026 |
-| dblp_full | T4-detrend-2sided | mad | 10 | 3.000 | 2 | 313128.000 | 0.004 | 0.167 | 0.716 | 3952.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-1sided | mad | 15 | 1.000 | 1 | 313130.000 | 0.004 | 0.167 | 0.716 | 3950.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-2sided | mad | 15 | 1.000 | 2 | 313130.000 | 0.004 | 0.167 | 0.716 | 3950.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-1sided | mad | 15 | 2.000 | 1 | 313125.000 | 0.004 | 0.167 | 0.716 | 3955.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-2sided | mad | 15 | 2.000 | 2 | 313128.000 | 0.004 | 0.167 | 0.716 | 3952.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-1sided | mad | 15 | 3.000 | 1 | 313113.000 | 0.004 | 0.167 | 0.716 | 3967.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-2sided | mad | 15 | 3.000 | 2 | 313128.000 | 0.004 | 0.167 | 0.716 | 3952.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-1sided | mad | 20 | 1.000 | 1 | 313130.000 | 0.004 | 0.167 | 0.716 | 3950.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-2sided | mad | 20 | 1.000 | 2 | 313130.000 | 0.004 | 0.167 | 0.716 | 3950.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-1sided | mad | 20 | 2.000 | 1 | 313125.000 | 0.004 | 0.167 | 0.716 | 3955.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-2sided | mad | 20 | 2.000 | 2 | 313128.000 | 0.004 | 0.167 | 0.716 | 3952.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T4-detrend-1sided | mad | 20 | 3.000 | 1 | 312828.000 | 0.004 | 0.168 | 0.716 | 4252.000 | 313936.000 | 0.014 | 0.026 |
-| dblp_full | T4-detrend-2sided | mad | 20 | 3.000 | 2 | 313128.000 | 0.004 | 0.167 | 0.716 | 3952.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T5-cusum | mad | 15 | 50.000 | 1 | 313113.000 | 0.004 | 0.167 | 0.716 | 3967.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T5-sr | mad | 15 | 50.000 | 1 | 313113.000 | 0.004 | 0.167 | 0.716 | 3967.000 | 313936.000 | 0.013 | 0.025 |
-| dblp_full | T1-2sided-k1 | defer+mad | 10 | 1.000 | 2 | 4924.000 | 0.730 | 0.341 | 0.500 | 312156.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T2-short-1sided | defer+mad | 5 | 5.000 | 1 | 4922.000 | 0.730 | 0.341 | 0.500 | 312158.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T3-diff-1sided | defer+mad | 15 | 3.000 | 1 | 4922.000 | 0.730 | 0.341 | 0.500 | 312158.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer+mad | 10 | 1.000 | 1 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer+mad | 10 | 1.000 | 2 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer+mad | 10 | 2.000 | 1 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer+mad | 10 | 2.000 | 2 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer+mad | 10 | 3.000 | 1 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer+mad | 10 | 3.000 | 2 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer+mad | 15 | 1.000 | 1 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer+mad | 15 | 1.000 | 2 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer+mad | 15 | 2.000 | 1 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer+mad | 15 | 2.000 | 2 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer+mad | 15 | 3.000 | 1 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer+mad | 15 | 3.000 | 2 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer+mad | 20 | 1.000 | 1 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer+mad | 20 | 1.000 | 2 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer+mad | 20 | 2.000 | 1 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer+mad | 20 | 2.000 | 2 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-1sided | defer+mad | 20 | 3.000 | 1 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T4-detrend-2sided | defer+mad | 20 | 3.000 | 2 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | T5-cusum | defer+mad | 15 | 50.000 | 1 | 4421.000 | 0.730 | 0.348 | 0.498 | 312659.000 | 313936.000 | 0.996 | 1.000 |
-| dblp_full | T5-sr | defer+mad | 15 | 50.000 | 1 | 4921.000 | 0.730 | 0.342 | 0.500 | 312159.000 | 313936.000 | 0.994 | 1.000 |
-| dblp_full | BM-native-stop | - | 0 | 2.000 | 1 | 286670.000 | 0.040 | 0.183 | 0.718 | 30410.000 | 313936.000 | 0.097 | 0.150 |
-| dblp_full | cm-baseline | - | 0 | 1.000 | 1 | 317080.000 | -0.000 | 0.167 | 0.716 | 0.000 | 313936.000 | 0.000 | 0.000 |
-| dblp_full | cm-baseline | - | 0 | 5.000 | 1 | 317080.000 | -0.000 | 0.167 | 0.716 | 0.000 | 313936.000 | 0.000 | 0.000 |
-| dblp_full | cm-baseline | - | 0 | 10.000 | 1 | 317080.000 | -0.000 | 0.167 | 0.716 | 0.000 | 313936.000 | 0.000 | 0.000 |
-| dblp_full | cm-baseline | - | 0 | 50.000 | 1 | 317080.000 | -0.000 | 0.167 | 0.716 | 0.000 | 313936.000 | 0.000 | 0.000 |
+## Pruned benchmark: citation networks
 
-# amazon_full CNM-full merges=333388 budget=0 singleton_phase_end=331875
-# dblp_full CNM-full merges=313936 budget=0 singleton_phase_end=312156
+Citeseer applies Planetoid's conventional all-zero row padding to 15 isolated test-index nodes. ego-Facebook projects overlapping SNAP circles to the first deterministic circle label per node; it is included for compatibility with single-label F1/NMI, not as an overlapping-community evaluation.
 
-### Plateau/tie-block diagnostics
+| graph | method | stop_at | of_merges | stop_frac | K | Q | F1 | NMI | frac_nonsingleton | trace_build_ms | rule_eval_ms | total_ms | window_evals |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| cora | CNM-full | 2603 | 2603 | 1.000 | 105 | 0.804 | 0.209 | 0.208 | 1.000 | 19.296 | 0.000 | 19.296 | 0 |
+| cora | T5-cusum-warmup | 2602 | 2603 | 1.000 | 106 | 0.804 | 0.209 | 0.208 | 1.000 | 19.296 | 0.010 | 19.305 | 37 |
+| citeseer | CNM-full | 2840 | 2840 | 1.000 | 439 | 0.870 | 0.130 | 0.212 | 1.000 | 10.424 | 0.000 | 10.424 | 0 |
+| citeseer | T5-cusum-warmup | 2838 | 2840 | 0.999 | 441 | 0.870 | 0.130 | 0.212 | 1.000 | 10.424 | 0.010 | 10.434 | 37 |
+| pubmed | CNM-full | 19597 | 19597 | 1.000 | 120 | 0.727 | 0.277 | 0.197 | 1.000 | 4373.598 | 0.000 | 4373.598 | 0 |
+| pubmed | T5-cusum-warmup | 19597 | 19597 | 1.000 | 120 | 0.727 | 0.277 | 0.197 | 1.000 | 4373.598 | 0.023 | 4373.621 | 55 |
 
-| graph | merge_index | dQ |
-| --- | ---: | ---: |
-| amazon_full | 2438 | 1.08006173632758866e-06 |
-| amazon_full | 2439 | 1.08006173632758866e-06 |
-| amazon_full | 2440 | 1.08006173632758866e-06 |
-| amazon_full | 2441 | 1.08006173632758866e-06 |
-| amazon_full | 2442 | 1.08006173632758866e-06 |
-| amazon_full | 2443 | 1.08006173632758866e-06 |
-| amazon_full | 2444 | 1.08006173632758866e-06 |
-| amazon_full | 2445 | 1.08006173632758866e-06 |
-| amazon_full | 2446 | 1.08006173632758866e-06 |
-| amazon_full | 2447 | 1.08006173632758866e-06 |
-| amazon_full | 2448 | 1.08006115305965150e-06 |
-| amazon_full | 2449 | 1.08006115305965150e-06 |
-| amazon_full | 2450 | 1.08006115305965150e-06 |
-| amazon_full | 2451 | 1.08006115305965150e-06 |
-| amazon_full | 2452 | 1.08006115305965150e-06 |
-| amazon_full | 2453 | 1.08006115305965150e-06 |
-| amazon_full | 2454 | 1.08006115305965150e-06 |
-| amazon_full | 2455 | 1.08006115305965150e-06 |
-| amazon_full | 2456 | 1.08006115305965150e-06 |
-| amazon_full | 2457 | 1.08006115305965150e-06 |
-| amazon_full | 2458 | 1.08006115305965150e-06 |
-| dblp_full | 2438 | 9.52501148952566497e-07 |
-| dblp_full | 2439 | 9.52501148952566497e-07 |
-| dblp_full | 2440 | 9.52501148952566497e-07 |
-| dblp_full | 2441 | 9.52501148952566497e-07 |
-| dblp_full | 2442 | 9.52501148952566497e-07 |
-| dblp_full | 2443 | 9.52501148952566497e-07 |
-| dblp_full | 2444 | 9.52501148952566497e-07 |
-| dblp_full | 2445 | 9.52501148952566497e-07 |
-| dblp_full | 2446 | 9.52501148952566497e-07 |
-| dblp_full | 2447 | 9.52501148952566497e-07 |
-| dblp_full | 2448 | 9.52501148952566497e-07 |
-| dblp_full | 2449 | 9.52501148952566497e-07 |
-| dblp_full | 2450 | 9.52501148952566497e-07 |
-| dblp_full | 2451 | 9.52501148952566497e-07 |
-| dblp_full | 2452 | 9.52501148952566497e-07 |
-| dblp_full | 2453 | 9.52501148952566497e-07 |
-| dblp_full | 2454 | 9.52501148952566497e-07 |
-| dblp_full | 2455 | 9.52501148952566497e-07 |
-| dblp_full | 2456 | 9.52501148952566497e-07 |
-| dblp_full | 2457 | 9.52501148952566497e-07 |
-| dblp_full | 2458 | 9.52501148952566497e-07 |
+## Raw artifacts
 
-# plateau-window amazon_full indices=2438..2458 bit_identical_consecutive=no
-# plateau-window dblp_full indices=2438..2458 bit_identical_consecutive=yes
-
-The verdict is explicit: Amazon has `bit_identical_consecutive=no` (the value changes at the 2447/2448 boundary, although both sides contain long exact runs); DBLP has `bit_identical_consecutive=yes` across every consecutive value in 2438--2458. The complete raw diagnostic log is [amazon_dblp.log](/Users/legol/Coding/Bader/graz-bader-mccloskey-research/amazon_dblp.log).
-
-The implementation uses at most 51 candidate cuts: every `ceil(T/50)` merges plus the terminal cut. It uses a fixed 90/10 edge split for held-out block likelihood, assignment entropy plus block Bernoulli code length for MDL, and 20 independent 5%-edge-deletion CNM traces for stability.
-
-| graph | candidates | likelihood cut | MDL cut | stability cut | CNM argmax-Q cut | BM-native cut | stability reps |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| karate | 30 | 0 | 0 | 0 | 29 | 0 | 20 |
-
-The karate result is a warning, not a success: naive positive-edge holdout, sparse-block MDL, and NMI stability all favour the singleton partition on this sparse graph. They should not be used as an external selector in the paper without a degree-corrected likelihood and a non-singleton support constraint. Amazon/DBLP multicut runs are intentionally not claimed complete.
-
-## Self-check
-
-- [x] Fixes 1--5 are implemented; fixes 1--4 were run on ER and all small graphs, and fix 5 was run on karate.
-- [x] ER uses 10 seeds and every new report row computes `frac_nonsingleton`.
-- [x] Mandatory Amazon/DBLP large-graph rows, F1/NMI, and plateau findings are complete; large-graph multicut results remain pending.
-- [x] Small-network experiment now emits rows.
-- [x] CNM merge selection was not changed; all new methods replay its recorded trace.
+| artifact | contents |
+| --- | --- |
+| `round4_fingerprint.log` | full Amazon/DBLP repeat-trace output and fingerprints |
+| `round4_amazon.log`, `round4_dblp.log` | warm-up control runs for mandatory large graphs |
+| `round4_small.log`, `round4_bench.log`, `round4_ego.log` | complete tab-separated benchmark rows |
+| `scripts/prepare_round4_benchmarks.py` | deterministic LFR/citation/ego-Facebook preparation |
