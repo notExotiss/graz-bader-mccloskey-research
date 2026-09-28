@@ -8,7 +8,7 @@
 //   Leiden      : Louvain + connectivity refinement       (Traag 2019)
 //   CPM-Leiden  : Constant Potts Model objective          (Traag 2011)
 //   GRAZ        : accept move iff z > tau AND dQ > 0       (Bader, GRAZ)
-//
+// 
 // The GRAZ acceptance rule is the only structural change from Louvain. Every
 // candidate move of node i into community B is gated by the standardized
 // Pearson residual of the move under the configuration-model null (Eq. 6):
